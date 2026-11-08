@@ -1,0 +1,1982 @@
+<!DOCTYPE html>
+<html lang="az">  
+<head>  
+<meta charset="UTF-8">  
+<!-- Google Maps (bütün xəritələr) -->
+<script>
+/* =====================================================================
+   BakuGo — GOOGLE MAPS ADAPTERİ
+   Tətbiqdəki bütün xəritələr Google Maps ilə işləyir. Köhnə kod Leaflet
+   sintaksisi (L.map, L.marker, ...) ilə yazıldığı üçün burada həmin
+   funksiyalar Google Maps JavaScript API üzərində yenidən qurulub.
+   Ünvan axtarışı / tərs axtarış -> Google Geocoding + Places,
+   marşrut məsafəsi/vaxtı -> Google Directions (Routes API ehtiyat).
+   Google Cloud-da aktiv olmalıdır: Maps JavaScript API, Geocoding API,
+   Places API (New), Directions API (və ya Routes API).
+   ===================================================================== */
+(function(){
+  'use strict';
+  if (window.BGMap) return;
+
+  var GMAPS_KEY = 'AIzaSyAQcVU7_ac2e73cMF__xd_t40Xu2kJchF4';
+  var BAKU = { lat: 40.4093, lng: 49.8671 };
+
+  var gm = null;               /* google.maps hazır olanda */
+  var readyCbs = [];
+  var failed = false, failMsg = '';
+  var allMaps = [];
+  var _fetch = window.fetch ? window.fetch.bind(window) : null;
+
+  var ready = new Promise(function(res, rej){
+    readyCbs.push(function(err){ err ? rej(err) : res(); });
+  });
+  ready.catch(function(){});
+
+  function whenReady(fn){ if (gm) fn(); else if (!failed) readyCbs.push(function(err){ if (!err) fn(); }); }
+  function fireReady(err){ var c = readyCbs; readyCbs = []; c.forEach(function(f){ try { f(err); } catch(e){ console.error(e); } }); }
+
+  function showFail(msg){
+    failed = true; failMsg = msg;
+    allMaps.forEach(function(m){ m._showFail(); });
+    fireReady(new Error(msg));
+  }
+
+  /* ---------- Google Maps JS API-ni yüklə ---------- */
+  window.__bgGmInit = async function(){
+    try {
+      var libs = ['maps', 'marker', 'geocoding', 'routes', 'geometry'];
+      for (var i = 0; i < libs.length; i++) { try { await google.maps.importLibrary(libs[i]); } catch(e){ console.warn('Google Maps kitabxanası yüklənmədi:', libs[i], e); } }
+      try { await google.maps.importLibrary('places'); } catch(e){ console.warn('Places kitabxanası yüklənmədi', e); }
+      gm = google.maps;
+      buildOverlayClass();
+      fireReady(null);
+    } catch(e){ showFail('Google Maps başladıla bilmədi'); }
+  };
+  window.gm_authFailure = function(){
+    showFail('Google Maps API açarı qəbul edilmədi (açar / domen məhdudiyyəti / billing yoxlanmalıdır).');
+  };
+  (function load(){
+    var s = document.createElement('script');
+    s.async = true;
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + GMAPS_KEY +
+            '&v=weekly&loading=async&language=az&region=AZ&libraries=places,geometry&callback=__bgGmInit';
+    s.onerror = function(){ showFail('Google Maps yüklənmədi. İnterneti/VPN-i yoxlayın.'); };
+    (document.head || document.documentElement).appendChild(s);
+  })();
+
+  /* ---------- köməkçilər ---------- */
+  function toLL(a, b){
+    if (a == null) return null;
+    if (typeof a === 'number' || typeof a === 'string') return { lat: parseFloat(a), lng: parseFloat(b) };
+    if (Array.isArray(a)) return { lat: parseFloat(a[0]), lng: parseFloat(a[1]) };
+    if (typeof a.lat === 'function') return { lat: a.lat(), lng: a.lng() };
+    if (a.latLng) return toLL(a.latLng);
+    return { lat: parseFloat(a.lat), lng: parseFloat(a.lng != null ? a.lng : a.lon) };
+  }
+  function okLL(p){ return p && isFinite(p.lat) && isFinite(p.lng); }
+  function LatLng(lat, lng){ this.lat = lat; this.lng = lng; }
+  LatLng.prototype.distanceTo = function(o){
+    o = toLL(o); var R = 6371000, r = Math.PI / 180;
+    var dLat = (o.lat - this.lat) * r, dLng = (o.lng - this.lng) * r;
+    var x = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(this.lat*r) * Math.cos(o.lat*r) * Math.sin(dLng/2) * Math.sin(dLng/2);
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  };
+  LatLng.prototype.equals = function(o){ o = toLL(o); return o && Math.abs(o.lat - this.lat) < 1e-9 && Math.abs(o.lng - this.lng) < 1e-9; };
+  function mkLL(p){ return p ? new LatLng(p.lat, p.lng) : null; }
+  function padNum(p){ if (p == null) return 0; return Array.isArray(p) ? Math.max(+p[0] || 0, +p[1] || 0) : (+p || 0); }
+
+  /* Kiçik hadisə sistemi (Leaflet-dəki .on/.off/.fire) */
+  function Evented(){}
+  Evented.prototype.on = function(t, fn){ var self = this; String(t).split(/\s+/).forEach(function(k){ if (!k) return; (self._ev = self._ev || {})[k] = (self._ev[k] || []).concat([fn]); if (self._onBind) self._onBind(k); }); return this; };
+  Evented.prototype.once = function(t, fn){ var self = this; var w = function(e){ self.off(t, w); fn.call(self, e); }; return this.on(t, w); };
+  Evented.prototype.off = function(t, fn){ if (!this._ev) return this; if (!t) { this._ev = {}; return this; } if (!fn) delete this._ev[t]; else this._ev[t] = (this._ev[t] || []).filter(function(f){ return f !== fn; }); return this; };
+  Evented.prototype.fire = function(t, e){ var self = this; e = e || {}; e.type = t; e.target = this; ((this._ev && this._ev[t]) || []).slice().forEach(function(f){ try { f.call(self, e); } catch(x){ console.error(x); } }); return this; };
+  Evented.prototype.listens = function(t){ return !!(this._ev && this._ev[t] && this._ev[t].length); };
+  function inherit(C, P){ C.prototype = Object.create(P.prototype); C.prototype.constructor = C; }
+
+  /* Gecə rejimi stili */
+  var DARK_STYLE = [
+    { elementType: 'geometry', stylers: [{ color: '#1d2230' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#1d2230' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#8a93a6' }] },
+    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#d4af37' }] },
+    { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#a08a4a' }] },
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1f3a2e' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#343b4d' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#202533' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#a3acc0' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#5a4a1f' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#2b2412' }] },
+    { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2a3040' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1726' }] },
+    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4e6d8c' }] }
+  ];
+
+  /* =================== XƏRİTƏ =================== */
+  function GMap(el, opts){
+    if (typeof el === 'string') el = document.getElementById(el);
+    if (!el) throw new Error('Xəritə konteyneri tapılmadı');
+    this._el = el; this._o = opts || {};
+    this._center = toLL(this._o.center) || { lat: BAKU.lat, lng: BAKU.lng };
+    this._zoom = this._o.zoom != null ? this._o.zoom : 13;
+    this._layers = []; this._g = null; this._removed = false;
+    this._style = { dark: false, satellite: false };
+    this._pendingFit = null; this._gl = [];
+    allMaps.push(this);
+    var self = this;
+    if (failed) this._showFail(); else whenReady(function(){ self._create(); });
+  }
+  inherit(GMap, Evented);
+  GMap.prototype._create = function(){
+    if (this._removed || this._g) return;
+    var self = this, o = this._o;
+    if (getComputedStyle(this._el).position === 'static') this._el.style.position = 'relative';
+    this._g = new gm.Map(this._el, {
+      center: this._center, zoom: this._zoom,
+      disableDefaultUI: true, zoomControl: o.zoomControl !== false,
+      gestureHandling: 'greedy', clickableIcons: false, keyboardShortcuts: false,
+      mapTypeId: this._style.satellite ? 'hybrid' : 'roadmap',
+      styles: (this._style.dark && !this._style.satellite) ? DARK_STYLE : null
+    });
+    this._iw = new gm.InfoWindow();
+    this._gl.push(this._g.addListener('click', function(e){ self._iw.close(); self._iwOwner = null; self.fire('click', { latlng: mkLL(toLL(e.latLng)) }); }));
+    this._gl.push(this._g.addListener('idle', function(){ var c = self._g.getCenter(); if (c) self._center = toLL(c); self._zoom = self._g.getZoom(); }));
+    ['zoomend', 'moveend', 'dragstart', 'movestart', 'dragend'].forEach(function(t){ if (self.listens(t)) self._bindG(t); });
+    try {
+      if (window.ResizeObserver) { this._ro = new ResizeObserver(function(){ self._applyPendingFit(); }); this._ro.observe(this._el); }
+    } catch(e){}
+    this._layers.slice().forEach(function(l){ l._attach(self); });
+    if (this._pendingFit) this._applyPendingFit();
+    this.fire('load');
+  };
+  var G_EVT = { zoomend: 'zoom_changed', moveend: 'idle', dragstart: 'dragstart', movestart: 'dragstart', dragend: 'dragend' };
+  GMap.prototype._onBind = function(t){ if (this._g && G_EVT[t]) this._bindG(t); };
+  GMap.prototype._bindG = function(t){
+    var self = this; this._bound = this._bound || {};
+    if (this._bound[t]) return; this._bound[t] = true;
+    this._gl.push(this._g.addListener(G_EVT[t], function(){ self.fire(t); }));
+  };
+  GMap.prototype._showFail = function(){
+    try {
+      if (this._removed) return;
+      this._el.innerHTML = '<div style="height:100%;min-height:120px;display:flex;align-items:center;justify-content:center;padding:14px;text-align:center;font:13px/1.45 sans-serif;color:#666;background:#f1f1f1;">' +
+        'Xəritə yüklənmədi. ' + (failMsg || '') + '</div>';
+    } catch(e){}
+  };
+  GMap.prototype.whenReady = function(fn){ var self = this; whenReady(function(){ fn.call(self); }); return this; };
+  GMap.prototype.getContainer = function(){ return this._el; };
+  GMap.prototype.setView = function(c, z){
+    var p = toLL(c); if (okLL(p)) this._center = p; if (z != null) this._zoom = z;
+    this._pendingFit = null;
+    if (this._g) { if (okLL(p)) this._g.setCenter(p); if (z != null) this._g.setZoom(z); }
+    return this;
+  };
+  GMap.prototype.panTo = function(c){ var p = toLL(c); if (!okLL(p)) return this; this._center = p; if (this._g) this._g.panTo(p); return this; };
+  GMap.prototype.flyTo = function(c, z){ var p = toLL(c); if (!okLL(p)) return this; this._center = p; if (z != null) this._zoom = z; if (this._g) { this._g.panTo(p); if (z != null) this._g.setZoom(z); } return this; };
+  GMap.prototype.setZoom = function(z){ this._zoom = z; if (this._g) this._g.setZoom(z); return this; };
+  GMap.prototype.getZoom = function(){ return this._g ? this._g.getZoom() : this._zoom; };
+  GMap.prototype.zoomIn = function(){ return this.setZoom(this.getZoom() + 1); };
+  GMap.prototype.zoomOut = function(){ return this.setZoom(this.getZoom() - 1); };
+  GMap.prototype.getCenter = function(){ var c = this._g && this._g.getCenter(); return mkLL(c ? toLL(c) : this._center); };
+  GMap.prototype.getBounds = function(){
+    var b = this._g && this._g.getBounds(); if (!b) return null;
+    var sw = toLL(b.getSouthWest()), ne = toLL(b.getNorthEast());
+    return { getSouthWest: function(){ return mkLL(sw); }, getNorthEast: function(){ return mkLL(ne); },
+      contains: function(p){ p = toLL(p); return b.contains(p); } };
+  };
+  GMap.prototype.fitBounds = function(pts, opts){
+    var list = [];
+    if (pts && typeof pts.getSouthWest === 'function') list = [toLL(pts.getSouthWest()), toLL(pts.getNorthEast())];
+    else (pts || []).forEach(function(p){ p = toLL(p); if (okLL(p)) list.push(p); });
+    if (!list.length) return this;
+    this._pendingFit = { pts: list, opts: opts || {} };
+    this._applyPendingFit();
+    return this;
+  };
+  GMap.prototype._applyPendingFit = function(){
+    var f = this._pendingFit; if (!f || !this._g) return;
+    if (!this._el.offsetWidth || !this._el.offsetHeight) return; /* gizlidir: görünəndə tətbiq olunacaq */
+    this._pendingFit = null;
+    var g = this._g, o = f.opts;
+    if (f.pts.length === 1) { g.setCenter(f.pts[0]); g.setZoom(o.maxZoom || 16); return; }
+    var b = new gm.LatLngBounds(); f.pts.forEach(function(p){ b.extend(p); });
+    g.fitBounds(b, padNum(o.padding));
+    if (o.maxZoom) gm.event.addListenerOnce(g, 'idle', function(){ if (g.getZoom() > o.maxZoom) g.setZoom(o.maxZoom); });
+  };
+  GMap.prototype.invalidateSize = function(){
+    if (this._g) { try { gm.event.trigger(this._g, 'resize'); } catch(e){} this._applyPendingFit(); }
+    return this;
+  };
+  GMap.prototype.addLayer = function(l){ if (l) l.addTo(this); return this; };
+  GMap.prototype.removeLayer = function(l){ if (l && l._map === this) l.remove(); return this; };
+  GMap.prototype.hasLayer = function(l){ return !!l && l._map === this; };
+  GMap.prototype.eachLayer = function(fn){ this._layers.slice().forEach(fn); return this; };
+  GMap.prototype.closePopup = function(){ if (this._iw) this._iw.close(); return this; };
+  GMap.prototype.remove = function(){
+    this._removed = true;
+    this._layers.slice().forEach(function(l){ try { l.remove(); } catch(e){} });
+    this._gl.forEach(function(h){ try { h.remove(); } catch(e){} }); this._gl = [];
+    try { if (this._ro) this._ro.disconnect(); } catch(e){}
+    if (this._iw) try { this._iw.close(); } catch(e){}
+    this._g = null; this._ev = {};
+    try { this._el.innerHTML = ''; } catch(e){}
+    var i = allMaps.indexOf(this); if (i >= 0) allMaps.splice(i, 1);
+    return this;
+  };
+  /* Görünüş: gecə rejimi və peyk */
+  GMap.prototype.setGoogleStyle = function(st){
+    st = st || {};
+    this._style = { dark: !!st.dark, satellite: !!st.satellite };
+    if (this._g) this._g.setOptions({ mapTypeId: this._style.satellite ? 'hybrid' : 'roadmap', styles: (this._style.dark && !this._style.satellite) ? DARK_STYLE : null });
+    return this;
+  };
+  GMap.prototype.getGoogleMap = function(){ return this._g; };
+
+  /* =================== LAYER bazası =================== */
+  function Layer(){}
+  inherit(Layer, Evented);
+  Layer.prototype.addTo = function(t){
+    if (t instanceof LayerGroup) { t.addLayer(this); return this; }
+    if (this._map === t) return this;
+    if (this._map) this.remove();
+    this._map = t; t._layers.push(this);
+    if (t._g) this._attach(t);
+    return this;
+  };
+  Layer.prototype.remove = function(){
+    var m = this._map; if (!m) return this;
+    this._map = null;
+    var i = m._layers.indexOf(this); if (i >= 0) m._layers.splice(i, 1);
+    this._detach(m);
+    return this;
+  };
+  Layer.prototype.removeFrom = function(m){ if (m instanceof LayerGroup) m.removeLayer(this); else if (this._map === m) this.remove(); return this; };
+  Layer.prototype._attach = function(){};
+  Layer.prototype._detach = function(){};
+  Layer.prototype.bindPopup = function(html){ this._popup = html; return this; };
+  Layer.prototype.unbindPopup = function(){ this._popup = null; return this; };
+  Layer.prototype.setPopupContent = function(html){ this._popup = html; return this; };
+  Layer.prototype.getPopup = function(){ var s = this; return this._popup == null ? null : { setContent: function(h){ s._popup = h; return this; }, getContent: function(){ return s._popup; } }; };
+  Layer.prototype.bindTooltip = function(html){ this._tooltip = html; return this; };
+  Layer.prototype.openPopup = function(){
+    if (this._popup == null) return this;
+    var m = this._map;
+    if (!m || !m._g) { this._wantPopup = true; return this; }
+    this._wantPopup = false;
+    var html = typeof this._popup === 'function' ? this._popup(this) : this._popup;
+    m._iw.setContent(String(html));
+    this._openIW(m);
+    return this;
+  };
+  Layer.prototype.closePopup = function(){ if (this._map && this._map._iw) this._map._iw.close(); return this; };
+  Layer.prototype._openIW = function(m){ m._iw.setOptions({ pixelOffset: null }); m._iw.setPosition(this._popupPos ? this._popupPos() : null); m._iw.open({ map: m._g }); m._iwOwner = this; };
+  Layer.prototype._clicked = function(e){
+    this.fire('click', { latlng: mkLL(e && e.latLng ? toLL(e.latLng) : (this.getLatLng ? this.getLatLng() : null)) });
+    if (this._popup != null) this.openPopup();
+  };
+
+  /* =================== MARKER =================== */
+  function DivIcon(o){ this.options = o || {}; this._div = true; }
+  function Icon(o){ this.options = o || {}; this._div = false; }
+  function Marker(ll, opts){ this._ll = toLL(ll); this.options = opts || {}; this._icon = this.options.icon || null; this._buildEl(); }
+  inherit(Marker, Layer);
+  Marker.prototype._isHtml = function(){ return !!(this._icon && this._icon._div); };
+  Marker.prototype._buildEl = function(){
+    if (!this._isHtml()) { this._el = null; return; }
+    var o = this._icon.options, d = this._el || document.createElement('div');
+    d.className = 'bg-gm-divicon' + (o.className ? ' ' + o.className : '');
+    d.style.position = 'absolute'; d.style.cursor = 'pointer';
+    var sz = o.iconSize || [24, 24];
+    if (sz) { d.style.width = sz[0] + 'px'; d.style.height = sz[1] + 'px'; }
+    var html = o.html;
+    if (html && html.nodeType) { d.innerHTML = ''; d.appendChild(html); } else d.innerHTML = html == null ? '' : html;
+    this._anchor = o.iconAnchor || (sz ? [sz[0] / 2, sz[1] / 2] : [0, 0]);
+    this._el = d;
+  };
+  Marker.prototype.getElement = function(){ return this._el || null; };
+  Marker.prototype.getLatLng = function(){ return mkLL(this._ll); };
+  Marker.prototype.setLatLng = function(ll){
+    var p = toLL(ll); if (!okLL(p)) return this;
+    this._ll = p;
+    if (this._gm) this._gm.setPosition(p);
+    if (this._ov) this._ov.draw();
+    if (this._ov && this._map && this._map._iw && this._map._iwOwner === this) this._map._iw.setPosition(this._ll);
+    this.fire('move', { latlng: mkLL(p) });
+    return this;
+  };
+  Marker.prototype.setIcon = function(icon){
+    var m = this._map; if (m) this._detach(m);
+    this._icon = icon; this.options.icon = icon; this._buildEl();
+    if (m && m._g) this._attach(m);
+    return this;
+  };
+  Marker.prototype.setOpacity = function(o){ this.options.opacity = o; if (this._gm) this._gm.setOpacity(o); if (this._el) this._el.style.opacity = o; return this; };
+  Marker.prototype.setZIndexOffset = function(z){ this.options.zIndexOffset = z; if (this._gm) this._gm.setZIndex(z); if (this._el) this._el.style.zIndex = z; return this; };
+  Marker.prototype._popupPos = function(){ return this._ll; };
+  Marker.prototype._openIW = function(m){
+    m._iw.setPosition(null);
+    if (this._gm) { m._iw.setOptions({ pixelOffset: null }); m._iw.open({ map: m._g, anchor: this._gm }); }
+    else { m._iw.setOptions({ pixelOffset: new gm.Size(0, -(this._anchor ? this._anchor[1] : 0)) }); m._iw.setPosition(this._ll); m._iw.open({ map: m._g }); }
+    m._iwOwner = this;
+  };
+  Marker.prototype._attach = function(m){
+    var self = this;
+    if (this._isHtml()) {
+      this._ov = new HtmlOverlay(this);
+      this._ov.setMap(m._g);
+    } else {
+      var mo = { position: this._ll, map: m._g, draggable: !!this.options.draggable, title: this.options.title || '' };
+      if (this.options.opacity != null) mo.opacity = this.options.opacity;
+      if (this.options.zIndexOffset != null) mo.zIndex = this.options.zIndexOffset;
+      var ic = this._icon && this._icon.options;
+      if (ic && ic.iconUrl) mo.icon = { url: ic.iconUrl, scaledSize: ic.iconSize ? new gm.Size(ic.iconSize[0], ic.iconSize[1]) : undefined, anchor: ic.iconAnchor ? new gm.Point(ic.iconAnchor[0], ic.iconAnchor[1]) : undefined };
+      this._gm = new gm.Marker(mo);
+      this._gl = [
+        this._gm.addListener('click', function(e){ self._clicked(e); }),
+        this._gm.addListener('dragstart', function(){ self.fire('dragstart'); }),
+        this._gm.addListener('drag', function(){ self._ll = toLL(self._gm.getPosition()); self.fire('drag', { latlng: mkLL(self._ll) }); }),
+        this._gm.addListener('dragend', function(){ self._ll = toLL(self._gm.getPosition()); self.fire('dragend', { latlng: mkLL(self._ll) }); })
+      ];
+    }
+    if (this._wantPopup) this.openPopup();
+  };
+  Marker.prototype._detach = function(m){
+    if (this._gm) { (this._gl || []).forEach(function(h){ h.remove(); }); this._gm.setMap(null); this._gm = null; }
+    if (this._ov) { this._ov.setMap(null); this._ov = null; }
+    if (m && m._iw && m._iwOwner === this) { m._iw.close(); m._iwOwner = null; }
+  };
+
+  /* HTML (divIcon) markerləri üçün OverlayView */
+  var HtmlOverlay = null;
+  function buildOverlayClass(){
+    HtmlOverlay = class extends gm.OverlayView {
+      constructor(owner){ super(); this.o = owner; }
+      onAdd(){
+        var o = this.o, d = o._el;
+        if (!d) return;
+        if (!d.__bgClick) {
+          d.__bgClick = true;
+          d.addEventListener('click', function(ev){ ev.stopPropagation(); o._clicked(null); });
+        }
+        try { gm.OverlayView.preventMapHitsAndGesturesFrom(d); } catch(e){}
+        this.getPanes().overlayMouseTarget.appendChild(d);
+      }
+      draw(){
+        var pr = this.getProjection(), o = this.o, d = o._el;
+        if (!pr || !d || !okLL(o._ll)) return;
+        var p = pr.fromLatLngToDivPixel(new gm.LatLng(o._ll.lat, o._ll.lng));
+        if (!p) return;
+        d.style.left = (p.x - o._anchor[0]) + 'px';
+        d.style.top = (p.y - o._anchor[1]) + 'px';
+      }
+      onRemove(){ var d = this.o._el; if (d && d.parentNode) d.parentNode.removeChild(d); }
+    };
+  }
+
+  /* =================== XƏTT / DAİRƏ =================== */
+  function strokeOpts(o, dflt){
+    o = o || {};
+    var r = { strokeColor: o.color || dflt || '#3388ff', strokeWeight: o.weight != null ? o.weight : 3, strokeOpacity: o.opacity != null ? o.opacity : 1, clickable: false };
+    if (o.dashArray) {
+      var parts = String(o.dashArray).split(/[\s,]+/).map(Number), gap = (parts[0] || 6) + (parts[1] || parts[0] || 6);
+      r.icons = [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: r.strokeOpacity, strokeColor: r.strokeColor, scale: Math.max(1, r.strokeWeight / 1.5) }, offset: '0', repeat: gap + 'px' }];
+      r.strokeOpacity = 0;
+    }
+    return r;
+  }
+  function Polyline(pts, opts){ this._pts = (pts || []).map(function(p){ return toLL(p); }).filter(okLL); this.options = opts || {}; }
+  inherit(Polyline, Layer);
+  Polyline.prototype._attach = function(m){ var o = strokeOpts(this.options); o.path = this._pts; o.map = m._g; o.zIndex = this.options.zIndex; this._g = new gm.Polyline(o); };
+  Polyline.prototype._detach = function(){ if (this._g) { this._g.setMap(null); this._g = null; } };
+  Polyline.prototype.setLatLngs = function(pts){ this._pts = (pts || []).map(function(p){ return toLL(p); }).filter(okLL); if (this._g) this._g.setPath(this._pts); return this; };
+  Polyline.prototype.getLatLngs = function(){ return this._pts.map(mkLL); };
+  Polyline.prototype.addLatLng = function(p){ p = toLL(p); if (okLL(p)) { this._pts.push(p); if (this._g) this._g.setPath(this._pts); } return this; };
+  Polyline.prototype.setStyle = function(o){ for (var k in o) this.options[k] = o[k]; if (this._g) this._g.setOptions(strokeOpts(this.options)); return this; };
+  Polyline.prototype.getBounds = function(){ return boundsOf(this._pts); };
+  Polyline.prototype._popupPos = function(){ return this._pts[Math.floor(this._pts.length / 2)] || null; };
+
+  function Circle(ll, opts){ this._ll = toLL(ll); this.options = opts || {}; }
+  inherit(Circle, Layer);
+  Circle.prototype._gopts = function(){
+    var o = this.options, s = strokeOpts(o);
+    return { center: this._ll, radius: +o.radius || 10, strokeColor: s.strokeColor, strokeWeight: s.strokeWeight, strokeOpacity: s.strokeOpacity || 1,
+      fillColor: o.fillColor || s.strokeColor, fillOpacity: o.fillOpacity != null ? o.fillOpacity : 0.2, clickable: false };
+  };
+  Circle.prototype._attach = function(m){ var o = this._gopts(); o.map = m._g; this._g = new gm.Circle(o); };
+  Circle.prototype._detach = function(){ if (this._g) { this._g.setMap(null); this._g = null; } };
+  Circle.prototype.setLatLng = function(ll){ var p = toLL(ll); if (okLL(p)) { this._ll = p; if (this._g) this._g.setCenter(p); } return this; };
+  Circle.prototype.getLatLng = function(){ return mkLL(this._ll); };
+  Circle.prototype.setRadius = function(r){ this.options.radius = r; if (this._g) this._g.setRadius(r); return this; };
+  Circle.prototype.getRadius = function(){ return this.options.radius; };
+  Circle.prototype.setStyle = function(o){ for (var k in o) this.options[k] = o[k]; if (this._g) this._g.setOptions(this._gopts()); return this; };
+  Circle.prototype._popupPos = function(){ return this._ll; };
+
+  /* Plitə qatı — Google Maps özü plitə verir, ona görə yalnız uyğunluq üçün boş obyektdir */
+  function TileLayer(){ }
+  inherit(TileLayer, Layer);
+  TileLayer.prototype.redraw = function(){ return this; };
+  TileLayer.prototype.setUrl = function(){ return this; };
+
+  /* =================== QRUP =================== */
+  function LayerGroup(layers){ this._items = []; this._map = null; var s = this; (layers || []).forEach(function(l){ s.addLayer(l); }); }
+  inherit(LayerGroup, Evented);
+  LayerGroup.prototype.addLayer = function(l){ if (!l || this._items.indexOf(l) >= 0) return this; this._items.push(l); if (this._map) Layer.prototype.addTo.call(l, this._map); return this; };
+  LayerGroup.prototype.removeLayer = function(l){ var i = this._items.indexOf(l); if (i >= 0) { this._items.splice(i, 1); l.remove(); } return this; };
+  LayerGroup.prototype.hasLayer = function(l){ return this._items.indexOf(l) >= 0; };
+  LayerGroup.prototype.clearLayers = function(){ this._items.slice().forEach(function(l){ l.remove(); }); this._items = []; return this; };
+  LayerGroup.prototype.eachLayer = function(fn){ this._items.slice().forEach(fn); return this; };
+  LayerGroup.prototype.getLayers = function(){ return this._items.slice(); };
+  LayerGroup.prototype.addTo = function(m){
+    if (this._map === m) return this; if (this._map) this.remove();
+    this._map = m; m._layers.push(this);
+    this._items.forEach(function(l){ Layer.prototype.addTo.call(l, m); });
+    return this;
+  };
+  LayerGroup.prototype.remove = function(){
+    var m = this._map; if (!m) return this; this._map = null;
+    var i = m._layers.indexOf(this); if (i >= 0) m._layers.splice(i, 1);
+    this._items.forEach(function(l){ l.remove(); });
+    return this;
+  };
+  LayerGroup.prototype._attach = function(){}; /* elementlər öz-özünə bağlanır */
+  LayerGroup.prototype._detach = function(){};
+  LayerGroup.prototype.getBounds = function(){ var pts = []; this._items.forEach(function(l){ if (l.getLatLng) pts.push(toLL(l.getLatLng())); }); return boundsOf(pts); };
+
+  function boundsOf(pts){
+    pts = pts.filter(okLL); if (!pts.length) return null;
+    var s = 90, w = 180, n = -90, e = -180;
+    pts.forEach(function(p){ s = Math.min(s, p.lat); n = Math.max(n, p.lat); w = Math.min(w, p.lng); e = Math.max(e, p.lng); });
+    return { getSouthWest: function(){ return mkLL({ lat: s, lng: w }); }, getNorthEast: function(){ return mkLL({ lat: n, lng: e }); },
+      getCenter: function(){ return mkLL({ lat: (s + n) / 2, lng: (w + e) / 2 }); }, isValid: function(){ return true; },
+      contains: function(p){ p = toLL(p); return p.lat >= s && p.lat <= n && p.lng >= w && p.lng <= e; } };
+  }
+
+  /* =================== MARŞRUT (Leaflet Routing Machine əvəzi) =================== */
+  function RoutingControl(o){
+    this.options = o || {}; this._wps = []; this._lines = []; this._seq = 0; this._last = null;
+    var self = this;
+    (this.options.waypoints || []).forEach(function(w){ var p = toLL(w); if (okLL(p)) self._wps.push({ latLng: mkLL(p) }); });
+  }
+  inherit(RoutingControl, Layer);
+  RoutingControl.prototype._attach = function(m){ this._drawLines(m); if (this._wps.length > 1 && !this._path) this.route(); };
+  RoutingControl.prototype._detach = function(){ this._clearLines(); };
+  RoutingControl.prototype.getWaypoints = function(){ return this._wps.slice(); };
+  RoutingControl.prototype.setWaypoints = function(list){
+    var self = this; this._wps = [];
+    (list || []).forEach(function(w){ var p = toLL(w); if (okLL(p)) self._wps.push({ latLng: mkLL(p) }); });
+    if (this._wps.length < 2) { this._seq++; this._path = null; this._clearLines(); return this; }
+    this.route();
+    return this;
+  };
+  RoutingControl.prototype.spliceWaypoints = function(i, n){
+    var add = Array.prototype.slice.call(arguments, 2).map(function(w){ return { latLng: mkLL(toLL(w)) }; });
+    var a = this._wps.slice(); a.splice.apply(a, [i, n].concat(add));
+    this.setWaypoints(a.map(function(w){ return w.latLng; }));
+    return this._wps;
+  };
+  RoutingControl.prototype._clearLines = function(){ this._lines.forEach(function(l){ l.setMap(null); }); this._lines = []; };
+  RoutingControl.prototype._drawLines = function(m){
+    this._clearLines();
+    if (!m || !m._g || !this._path || this._path.length < 2) return;
+    var styles = (this.options.lineOptions && this.options.lineOptions.styles) || [{ color: '#0a5fd6', weight: 6, opacity: 0.9 }];
+    var path = this._path, self = this;
+    styles.forEach(function(s, i){ var o = strokeOpts(s); o.path = path; o.map = m._g; o.zIndex = 10 + i; self._lines.push(new gm.Polyline(o)); });
+  };
+  RoutingControl.prototype.route = function(){
+    var self = this, seq = ++this._seq;
+    var a = toLL(this._wps[0].latLng), b = toLL(this._wps[this._wps.length - 1].latLng);
+    /* Eyni hədəfə 10 saniyədən tez və 60 m-dən az yerdəyişmə ilə təkrar sorğu göndərmə (xərc qənaəti) */
+    var L0 = this._last, now = Date.now();
+    if (L0 && L0.res && Math.abs(L0.b.lat - b.lat) < 1e-6 && Math.abs(L0.b.lng - b.lng) < 1e-6 && now - L0.t < 10000 &&
+        new LatLng(L0.a.lat, L0.a.lng).distanceTo(a) < 60) return this;
+    BGMap.route(a, b).then(function(r){
+      if (seq !== self._seq) return;
+      if (!r) { self.fire('routingerror', { error: { message: 'Marşrut tapılmadı' } }); return; }
+      self._last = { a: a, b: b, t: Date.now(), res: true };
+      self._path = r.path && r.path.length > 1 ? r.path : [a, b];
+      var m = self._map;
+      if (m && m._g) {
+        self._drawLines(m);
+        if (self.options.fitSelectedRoutes !== false) m.fitBounds(self._path, { padding: [40, 40] });
+      }
+      self.fire('routesfound', { routes: [{ summary: { totalDistance: r.distance, totalTime: r.duration }, coordinates: self._path.map(mkLL), waypoints: self._wps.map(function(w){ return w.latLng; }) }] });
+    });
+    return this;
+  };
+  RoutingControl.prototype.getPlan = function(){ return this; };
+  RoutingControl.prototype.hide = function(){ return this; };
+  RoutingControl.prototype.show = function(){ return this; };
+
+  /* =================== GEOKODLAŞDIRMA / MARŞRUT SERVİSLƏRİ =================== */
+  var disabled = {};
+  function addrFromComponents(comps, formatted){
+    var a = {}, get = function(t, short){ for (var i = 0; i < comps.length; i++) { var c = comps[i]; if ((c.types || []).indexOf(t) >= 0) return short ? (c.short_name || c.shortText) : (c.long_name || c.longText); } return ''; };
+    a.house_number = get('street_number');
+    a.road = get('route');
+    a.neighbourhood = get('neighborhood');
+    a.suburb = get('sublocality_level_1') || get('sublocality') || get('neighborhood');
+    a.city_district = get('sublocality_level_1') || get('administrative_area_level_2');
+    a.city = get('locality') || get('postal_town') || get('administrative_area_level_2');
+    a.state = get('administrative_area_level_1');
+    a.country = get('country');
+    a.country_code = (get('country', true) || '').toLowerCase();
+    a.postcode = get('postal_code');
+    a.building = get('premise') || get('establishment') || get('point_of_interest');
+    Object.keys(a).forEach(function(k){ if (!a[k]) delete a[k]; });
+    return a;
+  }
+  function geocoderReq(req){
+    return ready.then(function(){ return new gm.Geocoder().geocode(req); }).then(function(r){ return (r && r.results) || []; });
+  }
+  function bestReverse(results){
+    var pref = ['street_address', 'premise', 'subpremise', 'route', 'establishment', 'point_of_interest'];
+    for (var i = 0; i < pref.length; i++) for (var j = 0; j < results.length; j++) if ((results[j].types || []).indexOf(pref[i]) >= 0) return results[j];
+    return results[0] || null;
+  }
+  function placeToItem(p){
+    var loc = p.location ? toLL(p.location) : null;
+    var comps = (p.addressComponents || []).map(function(c){ return { long_name: c.longText, short_name: c.shortText, types: c.types }; });
+    var addr = addrFromComponents(comps);
+    return { lat: loc && loc.lat, lng: loc && loc.lng, name: p.displayName || '', formatted: p.formattedAddress || '', address: addr };
+  }
+
+  var BGMap = {
+    key: GMAPS_KEY,
+    ready: ready,
+    isReady: function(){ return !!gm; },
+    /* Mətndən koordinat: [{lat,lng,name,formatted,address}] */
+    search: async function(q, limit){
+      q = String(q || '').trim(); limit = limit || 7;
+      if (!q) return [];
+      await ready;
+      var out = [], errs = 0;
+      /* 1) Places (New) mətn axtarışı — məkan adları, restoranlar, ticarət mərkəzləri */
+      if (!disabled.places && gm.places && gm.places.Place && gm.places.Place.searchByText) {
+        try {
+          var r = await gm.places.Place.searchByText({
+            textQuery: q, fields: ['displayName', 'formattedAddress', 'location', 'addressComponents'],
+            locationBias: { center: BAKU, radius: 50000 }, maxResultCount: Math.min(limit, 20), language: 'az', region: 'az'
+          });
+          (r.places || []).forEach(function(p){ var it = placeToItem(p); if (okLL(it) && (!it.address.country_code || it.address.country_code === 'az')) out.push(it); });
+        } catch(e){ errs++; console.warn('Google Places axtarışı alınmadı:', e && e.message); if (/denied|not.*(enabled|activated|authorized)|PERMISSION|API_KEY/i.test(String(e && e.message))) disabled.places = true; }
+      }
+      /* 2) Geocoding — dəqiq ünvanlar (küçə, ev nömrəsi) */
+      if (out.length < limit) {
+        try {
+          var res = await geocoderReq({ address: q, componentRestrictions: { country: 'AZ' }, region: 'az', language: 'az' });
+          res.forEach(function(g){
+            var p = toLL(g.geometry.location);
+            if (out.some(function(o){ return Math.abs(o.lat - p.lat) < 1e-4 && Math.abs(o.lng - p.lng) < 1e-4; })) return;
+            out.push({ lat: p.lat, lng: p.lng, name: '', formatted: g.formatted_address, address: addrFromComponents(g.address_components || []) });
+          });
+        } catch(e){ if (!/ZERO_RESULTS/.test(String(e && (e.code || e.message)))) { errs++; console.warn('Google Geocoding alınmadı:', e && e.message); } }
+      }
+      if (!out.length && errs) throw new Error('Google axtarış xidmətləri cavab vermədi');
+      return out.slice(0, limit);
+    },
+    /* Koordinatdan ünvan: {formatted, address} və ya null */
+    reverse: async function(lat, lng){
+      await ready;
+      var res = await geocoderReq({ location: { lat: +lat, lng: +lng }, language: 'az' });
+      var g = bestReverse(res); if (!g) return null;
+      var addr = addrFromComponents(g.address_components || []);
+      /* küçə adı ilk nəticədə yoxdursa, digərlərindən tamamla */
+      if (!addr.road) for (var i = 0; i < res.length && !addr.road; i++) { var a2 = addrFromComponents(res[i].address_components || []); if (a2.road) { addr.road = a2.road; if (!addr.house_number && a2.house_number) addr.house_number = a2.house_number; } }
+      return { formatted: g.formatted_address, address: addr, lat: +lat, lng: +lng };
+    },
+    /* Real yol marşrutu: {distance (m), duration (san), path:[{lat,lng}]} və ya null */
+    route: async function(a, b){
+      a = toLL(a); b = toLL(b);
+      if (!okLL(a) || !okLL(b)) return null;
+      var key = [a.lat.toFixed(4), a.lng.toFixed(4), b.lat.toFixed(4), b.lng.toFixed(4)].join(',');
+      var c = routeCache[key];
+      if (c && Date.now() - c.t < 60000) return c.p;
+      var p = routeCalc(a, b).then(function(r){ if (!r) delete routeCache[key]; return r; });
+      routeCache[key] = { t: Date.now(), p: p };
+      return p;
+    },
+    /* Google Maps tətbiqində marşrutu aç */
+    navUrl: function(lat, lng){ return 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving'; }
+  };
+  var routeCache = {};
+  async function routeCalc(a, b){
+    try { await ready; } catch(e){ return null; }
+    if (!disabled.directions && gm.DirectionsService) {
+      try {
+        var r = await new gm.DirectionsService().route({ origin: a, destination: b, travelMode: 'DRIVING', region: 'az' });
+        var rt = r && r.routes && r.routes[0];
+        if (rt && rt.legs && rt.legs.length) {
+          var d = 0, t = 0; rt.legs.forEach(function(l){ d += (l.distance && l.distance.value) || 0; t += (l.duration && l.duration.value) || 0; });
+          return { distance: d, duration: t, path: (rt.overview_path || []).map(toLL) };
+        }
+      } catch(e){
+        var msg = String(e && (e.code || e.message));
+        if (/REQUEST_DENIED|not.*(enabled|activated|authorized)|legacy/i.test(msg)) disabled.directions = true;
+        if (/ZERO_RESULTS|NOT_FOUND/.test(msg)) return null;
+        console.warn('Google Directions alınmadı:', msg);
+      }
+    }
+    /* Ehtiyat: Google Routes API */
+    if (!disabled.routesApi && _fetch) {
+      try {
+        var res = await _fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GMAPS_KEY, 'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline' },
+          body: JSON.stringify({ origin: { location: { latLng: { latitude: a.lat, longitude: a.lng } } }, destination: { location: { latLng: { latitude: b.lat, longitude: b.lng } } }, travelMode: 'DRIVE', languageCode: 'az', regionCode: 'az' })
+        });
+        if (res.status === 403) disabled.routesApi = true;
+        var j = await res.json();
+        var r0 = j && j.routes && j.routes[0];
+        if (r0) return { distance: r0.distanceMeters || 0, duration: parseFloat(r0.duration) || 0, path: decodePolyline(r0.polyline && r0.polyline.encodedPolyline) };
+      } catch(e){ console.warn('Google Routes API alınmadı:', e && e.message); }
+    }
+    return null;
+  }
+  function decodePolyline(s){
+    if (!s) return [];
+    var i = 0, lat = 0, lng = 0, out = [];
+    while (i < s.length) {
+      var b, sh = 0, r = 0; do { b = s.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32);
+      lat += (r & 1) ? ~(r >> 1) : (r >> 1);
+      sh = 0; r = 0; do { b = s.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32);
+      lng += (r & 1) ? ~(r >> 1) : (r >> 1);
+      out.push({ lat: lat / 1e5, lng: lng / 1e5 });
+    }
+    return out;
+  }
+  window.BGMap = BGMap;
+
+  /* =================== Leaflet uyğun "L" obyekti =================== */
+  window.L = {
+    version: 'google-maps-adapter',
+    map: function(el, o){ return new GMap(el, o); },
+    marker: function(ll, o){ return new Marker(ll, o); },
+    divIcon: function(o){ return new DivIcon(o); },
+    icon: function(o){ return new Icon(o); },
+    polyline: function(p, o){ return new Polyline(p, o); },
+    circle: function(ll, o, r){ if (typeof o === 'number') o = { radius: o }; o = o || {}; if (r != null) o.radius = r; return new Circle(ll, o); },
+    circleMarker: function(ll, o){ o = o || {}; var c = new Circle(ll, o); c.options.radius = (o.radius || 8) * 4; return c; },
+    layerGroup: function(l){ return new LayerGroup(l); },
+    featureGroup: function(l){ return new LayerGroup(l); },
+    tileLayer: function(){ return new TileLayer(); },
+    latLng: function(a, b){ var p = toLL(a, b); return okLL(p) ? new LatLng(p.lat, p.lng) : null; },
+    latLngBounds: function(a, b){ var pts = Array.isArray(a) && b === undefined ? a : [a, b]; return boundsOf(pts.map(function(p){ return toLL(p); })); },
+    Routing: { control: function(o){ return new RoutingControl(o); } },
+    DomEvent: { disableClickPropagation: function(){}, disableScrollPropagation: function(){}, stopPropagation: function(e){ if (e && e.stopPropagation) e.stopPropagation(); } },
+    control: { zoom: function(){ return { addTo: function(){ return this; } }; }, attribution: function(){ return { addTo: function(){ return this; } }; } },
+    Map: GMap, Marker: Marker, LatLng: LatLng
+  };
+
+  /* =================== Köhnə OSM sorğularının Google-a yönləndirilməsi ===================
+     Kodda qalmış nominatim / photon / OSRM fetch çağırışları burada tutulur və eyni formatda
+     Google nəticəsi qaytarılır. Google xidməti aktiv deyilsə, son ehtiyat olaraq köhnə xidmətə gedir. */
+  function jsonResp(o){ return new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }); }
+  function qp(url){ try { return new URL(url).searchParams; } catch(e){ return new URLSearchParams(''); } }
+  function abortable(p, signal){
+    if (!signal) return p;
+    if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    return new Promise(function(res, rej){
+      var on = function(){ rej(new DOMException('Aborted', 'AbortError')); };
+      signal.addEventListener('abort', on, { once: true });
+      p.then(function(v){ signal.removeEventListener('abort', on); res(v); }, function(e){ signal.removeEventListener('abort', on); rej(e); });
+    });
+  }
+  function toNominatim(it){
+    var disp = it.formatted || it.name || '';
+    if (it.name && disp.indexOf(it.name) !== 0) disp = it.name + ', ' + disp;
+    return { lat: String(it.lat), lon: String(it.lng), display_name: disp, name: it.name || '', address: it.address || {} };
+  }
+  function toPhoton(it){
+    var a = it.address || {};
+    return { type: 'Feature', geometry: { type: 'Point', coordinates: [it.lng, it.lat] }, properties: {
+      name: it.name || a.building || '', street: a.road || '', housenumber: a.house_number || '', district: a.suburb || a.city_district || '',
+      locality: a.neighbourhood || '', city: a.city || '', state: a.state || '', country: a.country || '', countrycode: (a.country_code || 'az').toUpperCase(),
+      osm_key: a.road && !it.name ? 'highway' : 'place' } };
+  }
+  async function handleOsm(kind, url, input, init){
+    var q = qp(url);
+    try {
+      if (kind === 'nomSearch') {
+        var lim = parseInt(q.get('limit') || '7', 10) || 7;
+        var r = await BGMap.search(q.get('q') || '', lim);
+        return jsonResp(r.map(toNominatim));
+      } else if (kind === 'photon') {
+        var r2 = await BGMap.search(q.get('q') || '', parseInt(q.get('limit') || '7', 10) || 7);
+        return jsonResp({ type: 'FeatureCollection', features: r2.map(toPhoton) });
+      } else if (kind === 'nomReverse') {
+        var rv = await BGMap.reverse(q.get('lat'), q.get('lon'));
+        if (rv) return jsonResp({ lat: String(rv.lat), lon: String(rv.lng), display_name: rv.formatted, address: rv.address });
+        return jsonResp({ error: 'Unable to geocode' });
+      } else if (kind === 'osrm') {
+        var m = url.match(/driving\/(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)/);
+        if (m) {
+          var rt = await BGMap.route({ lat: +m[2], lng: +m[1] }, { lat: +m[4], lng: +m[3] });
+          if (rt) return jsonResp({ code: 'Ok', routes: [{ distance: rt.distance, duration: rt.duration }], waypoints: [] });
+        }
+      }
+    } catch(e){ console.warn('Google xidməti cavab vermədi, ehtiyat xidmətə keçilir:', e && e.message); }
+    /* son ehtiyat: köhnə açıq xidmət */
+    return _fetch(input, init);
+  }
+  if (_fetch) {
+    window.fetch = function(input, init){
+      var url = typeof input === 'string' ? input : (input && input.url) || String(input);
+      var kind = null;
+      if (/nominatim\.openstreetmap\.org\/search/.test(url)) kind = 'nomSearch';
+      else if (/nominatim\.openstreetmap\.org\/reverse/.test(url)) kind = 'nomReverse';
+      else if (/photon\.komoot\.io\/api/.test(url)) kind = 'photon';
+      else if (/router\.project-osrm\.org\/route\/v1\/driving/.test(url)) kind = 'osrm';
+      if (!kind) return _fetch(input, init);
+      return abortable(handleOsm(kind, url, input, init), init && init.signal);
+    };
+  }
+
+  /* InfoWindow içi bir az səliqəli görünsün */
+  try {
+    var st = document.createElement('style');
+    st.textContent = '.gm-style .gm-style-iw-c{border-radius:12px;padding:10px 12px!important}.gm-style .gm-style-iw-d{overflow:auto!important;font:13px/1.45 inherit;color:#222}' +
+      '.bg-gm-divicon{box-sizing:border-box;line-height:normal}.bg-gm-divicon *{box-sizing:border-box}';
+    (document.head || document.documentElement).appendChild(st);
+  } catch(e){}
+})();
+
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>BakuGo Restoran</title>
+<meta name="description" content="BakuGo Restoran — sifarişləri qəbul et, menyunu idarə et.">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BakuGo Restoran">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script>
+function __osmLayer(m){ return null; }
+if ("serviceWorker" in navigator) {
+  window.__swReady = new Promise(function(resolve){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js", { scope: "./" })
+        .then(function(r){ resolve(r); }).catch(function(e){ console.warn("SW:", e); resolve(null); });
+    });
+  });
+}
+/* "Tətbiqi quraşdır" düyməsi üçün */
+window.addEventListener("beforeinstallprompt", function(e){ e.preventDefault(); window.__installEvt = e; var b = document.getElementById("installBtn"); if(b) b.style.display = "flex"; });
+</script>
+<style>
+:root{
+  --bg:#060606; --bg2:#0d0d0d; --card:#121212; --card2:#181818; --line:rgba(255,255,255,.08);
+  --gold:#e3b341; --gold2:#ffd77a; --gold-deep:#a8771a; --text:#f6f1e7; --muted:rgba(246,241,231,.55);
+  --green:#1fbf6b; --red:#ef4444; --blue:#3b82f6; --amber:#f59e0b;
+  --r:18px; --nav:68px; --top:64px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+  font-family:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overscroll-behavior:none;}
+button{font-family:inherit;}
+input,select,textarea{font-family:inherit;}
+
+/* ===== ÜST PANEL ===== */
+.topbar{position:fixed;top:0;left:0;right:0;z-index:40;height:calc(var(--top) + env(safe-area-inset-top));
+  padding:env(safe-area-inset-top) 14px 0;display:flex;align-items:center;gap:10px;
+  background:linear-gradient(180deg,#0b0b0b,#070707);border-bottom:1px solid var(--line);}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1;}
+.brand img{width:38px;height:38px;border-radius:11px;box-shadow:0 0 0 1px rgba(227,179,65,.35);}
+.brand .t{min-width:0}
+.brand .n{font-weight:800;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.brand .s{font-size:11.5px;color:var(--muted);}
+.status-pill{display:flex;align-items:center;gap:7px;padding:8px 12px;border-radius:999px;border:1px solid var(--line);
+  background:#141414;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
+.status-pill .d{width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 0 3px rgba(239,68,68,.18);}
+.status-pill.on .d{background:var(--green);box-shadow:0 0 0 3px rgba(31,191,107,.2);}
+.ibtn{position:relative;width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:#141414;color:var(--text);
+  font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
+.ibtn .b{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--red);
+  color:#fff;font-size:10.5px;font-weight:800;display:none;align-items:center;justify-content:center;border:2px solid #070707;}
+.ibtn .b.show{display:flex;}
+.ibtn.ring{animation:ring .55s ease-in-out 2;}
+@keyframes ring{0%,100%{transform:rotate(0)}25%{transform:rotate(14deg)}50%{transform:rotate(-12deg)}75%{transform:rotate(6deg)}}
+
+/* ===== MƏZMUN ===== */
+#main{position:fixed;left:0;right:0;top:calc(var(--top) + env(safe-area-inset-top));bottom:calc(var(--nav) + env(safe-area-inset-bottom));
+  overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:14px 14px 28px;}
+.view{display:none;max-width:760px;margin:0 auto;}
+.view.active{display:block;animation:fade .2s ease-out;}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.h2{font-size:22px;font-weight:800;letter-spacing:-.2px;margin:4px 2px 12px;}
+
+/* ===== ALT NAVİQASİYA ===== */
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:40;height:calc(var(--nav) + env(safe-area-inset-bottom));
+  padding:6px 10px env(safe-area-inset-bottom);display:flex;gap:6px;background:#0a0a0a;border-top:1px solid var(--line);}
+.nav button{flex:1;border:none;background:none;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;font-size:11.5px;font-weight:700;border-radius:14px;position:relative;cursor:pointer;}
+.nav button .ic{font-size:21px;line-height:1;filter:grayscale(1) opacity(.7);}
+.nav button.active{color:var(--gold2);background:rgba(227,179,65,.08);}
+.nav button.active .ic{filter:none;}
+.nav button .b{position:absolute;top:6px;left:calc(50% + 8px);min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--red);
+  color:#fff;font-size:10.5px;font-weight:800;display:none;align-items:center;justify-content:center;}
+.nav button .b.show{display:flex;}
+
+/* ===== STATİSTİKA ===== */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;}
+.stat .v{font-size:20px;font-weight:800;}
+.stat .l{font-size:11.5px;color:var(--muted);margin-top:2px;}
+.stat.g .v{color:var(--gold2);}
+#stLateBox .v{color:var(--text);}
+#stLateBox.late .v{color:#fca5a5;}
+#loginBox .btn{width:100%;}
+
+/* ===== ÇİPLƏR ===== */
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none;}
+.chips::-webkit-scrollbar{display:none;}
+.chip{flex-shrink:0;padding:9px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--text);
+  font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;}
+.chip .c{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:rgba(255,255,255,.08);font-size:11.5px;display:flex;align-items:center;justify-content:center;}
+.chip.active{background:var(--gold);border-color:var(--gold);color:#1a1200;}
+.chip.active .c{background:rgba(0,0,0,.15);}
+.chip.new.has .c{background:var(--red);color:#fff;}
+#v-menu{padding-bottom:84px;}
+
+/* ===== SİFARİŞ KARTI ===== */
+.ord{background:var(--card);border:1px solid var(--line);border-radius:var(--r);margin-bottom:12px;overflow:hidden;contain:layout paint;}
+.ord.is-new{border-color:rgba(239,68,68,.55);box-shadow:0 0 0 1px rgba(239,68,68,.25),0 10px 30px rgba(239,68,68,.12);}
+.ord-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 14px 10px;}
+.ord-id{font-weight:800;font-size:16px;}
+.ord-time{font-size:12px;color:var(--muted);margin-top:2px;}
+.badge{padding:6px 10px;border-radius:999px;font-size:11.5px;font-weight:800;white-space:nowrap;}
+.b-new{background:rgba(239,68,68,.15);color:#ff8a8a;}
+.b-prep{background:rgba(245,158,11,.15);color:#fbbf24;}
+.b-search{background:rgba(59,130,246,.15);color:#93c5fd;}
+.b-warn{background:rgba(239,68,68,.15);color:#fca5a5;}
+.b-cour{background:rgba(31,191,107,.15);color:#6ee7a8;}
+.b-done{background:rgba(255,255,255,.08);color:var(--muted);}
+.ord-items{padding:0 14px;}
+.oi{display:flex;gap:10px;padding:8px 0;border-top:1px dashed var(--line);font-size:14px;}
+.oi .q{min-width:30px;height:24px;border-radius:7px;background:rgba(227,179,65,.14);color:var(--gold2);font-weight:800;font-size:12.5px;display:flex;align-items:center;justify-content:center;}
+.oi .n{flex:1;font-weight:600;}
+.oi .p{font-weight:700;white-space:nowrap;}
+.oi .p s{opacity:.5;font-weight:500;margin-right:4px;font-size:12px;}
+.ord-note{margin:6px 14px 0;padding:9px 11px;border-radius:10px;background:rgba(245,158,11,.08);color:#fcd34d;font-size:13px;}
+.ord-sum{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-top:1px solid var(--line);margin-top:8px;}
+.ord-sum .t{font-size:13px;color:var(--muted);}
+.ord-sum .v{font-size:18px;font-weight:800;}
+.ord-sub{padding:0 14px 6px;font-size:12.5px;color:var(--muted);}
+.ord-act{display:flex;gap:8px;padding:0 14px 14px;flex-wrap:wrap;}
+.btn{flex:1;min-height:48px;padding:12px 14px;border:none;border-radius:14px;font-size:15px;font-weight:800;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;color:#fff;}
+.btn:disabled{opacity:.5;}
+.btn.g{background:var(--green);} .btn.r{background:transparent;border:1px solid rgba(239,68,68,.5);color:#fca5a5;flex:0 0 auto;}
+.btn.y{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1200;}
+.btn.b{background:var(--blue);} .btn.k{background:#1f1f1f;border:1px solid var(--line);color:var(--text);}
+.btn.sm{min-height:38px;font-size:13px;padding:8px 12px;border-radius:11px;}
+.map-box{height:200px;margin:0 14px 14px;border-radius:14px;overflow:hidden;display:none;}
+.empty{text-align:center;padding:50px 20px;color:var(--muted);}
+.empty .e{font-size:44px;margin-bottom:10px;}
+
+/* ===== MENYU ===== */
+.search{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0 12px;margin-bottom:10px;}
+.search input{flex:1;background:none;border:none;color:var(--text);padding:13px 0;font-size:15px;outline:none;}
+.prod{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:10px;margin-bottom:10px;contain:layout paint;}
+.prod img{width:76px;height:76px;border-radius:12px;object-fit:cover;background:#1b1b1b;flex-shrink:0;}
+.prod .i{flex:1;min-width:0;cursor:pointer;}
+.prod .n{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.prod .c{font-size:12px;color:var(--muted);margin-top:2px;}
+.prod .p{margin-top:6px;font-weight:800;font-size:15px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.prod .p s{opacity:.5;font-weight:500;font-size:12.5px;}
+.prod .p .dc{background:var(--red);color:#fff;font-size:11px;padding:2px 7px;border-radius:6px;}
+.prod.off{opacity:.5;}
+.sw{position:relative;width:46px;height:28px;flex-shrink:0;}
+.sw input{display:none;}
+.sw span{position:absolute;inset:0;border-radius:999px;background:#2a2a2a;transition:.2s;cursor:pointer;}
+.sw span::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s;}
+.sw input:checked + span{background:var(--green);}
+.sw input:checked + span::after{transform:translateX(18px);}
+.fab{position:fixed;right:16px;bottom:calc(var(--nav) + env(safe-area-inset-bottom) + 16px);z-index:41;height:56px;padding:0 20px;border-radius:18px;
+  border:none;background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1200;font-size:15.5px;font-weight:900;display:none;align-items:center;gap:8px;
+  box-shadow:0 10px 30px rgba(227,179,65,.35);cursor:pointer;}
+.fab.show{display:flex;}
+
+/* ===== ALT VƏRƏQ (SHEET) ===== */
+.scrim{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:.2s;}
+.scrim.show{opacity:1;pointer-events:auto;}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:61;max-height:92%;background:#101010;border-top:1px solid var(--line);
+  border-radius:24px 24px 0 0;transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column;max-width:760px;margin:0 auto;}
+.sheet.show{transform:none;}
+.sheet .grab{width:42px;height:5px;border-radius:3px;background:#333;margin:10px auto 2px;}
+.sheet .hd{display:flex;align-items:center;justify-content:space-between;padding:8px 16px 10px;}
+.sheet .hd h3{font-size:19px;font-weight:800;}
+.sheet .bd{overflow-y:auto;padding:4px 16px calc(18px + env(safe-area-inset-bottom));overscroll-behavior:contain;}
+.lbl{font-size:12.5px;color:var(--muted);font-weight:700;margin:12px 2px 6px;}
+.inp{width:100%;padding:14px;border-radius:13px;border:1px solid var(--line);background:#171717;color:var(--text);font-size:15px;outline:none;}
+.inp:focus{border-color:rgba(227,179,65,.6);}
+.row{display:flex;gap:8px;}
+.seg{display:flex;gap:6px;flex-wrap:wrap;}
+.seg button{padding:10px 14px;border-radius:11px;border:1px solid var(--line);background:#171717;color:var(--text);font-weight:700;font-size:13.5px;cursor:pointer;}
+.seg button.on{background:rgba(227,179,65,.15);border-color:var(--gold);color:var(--gold2);}
+.upl{position:relative;width:100%;aspect-ratio:16/10;border-radius:16px;border:2px dashed rgba(255,255,255,.18);background:#141414;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.upl img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;}
+.upl .ph{text-align:center;color:var(--muted);font-size:13px;}
+.upl .ph b{display:block;color:var(--text);font-size:15px;margin:6px 0 2px;}
+.upl.has{border-style:solid;border-color:var(--line);}
+.upl.has img{display:block;}
+.upl.has .ph{display:none;}
+.box-line{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px;border-radius:14px;background:#171717;border:1px solid var(--line);margin-top:12px;}
+.box-line .t{font-weight:700;font-size:14.5px;}
+.box-line .s{font-size:12px;color:var(--muted);margin-top:2px;}
+
+/* ===== YENİ SİFARİŞ EKRANI ===== */
+#incoming{position:fixed;inset:0;z-index:80;background:radial-gradient(circle at 50% 0%,#3a0d0d,#0a0505 60%);display:none;flex-direction:column;
+  padding:calc(18px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));}
+#incoming.show{display:flex;}
+.inc-top{text-align:center;}
+.inc-pulse{width:92px;height:92px;margin:6px auto 10px;border-radius:50%;background:var(--red);display:flex;align-items:center;justify-content:center;font-size:42px;
+  animation:pulse 1.2s ease-out infinite;}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.6)}100%{box-shadow:0 0 0 34px rgba(239,68,68,0)}}
+.inc-title{font-size:26px;font-weight:900;}
+.inc-sub{color:var(--muted);font-size:14px;margin-top:4px;}
+.inc-card{flex:1;overflow-y:auto;margin:16px 0;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:20px;padding:6px 0;}
+.inc-more{text-align:center;font-size:13px;color:#fca5a5;margin-bottom:10px;}
+.prep{display:flex;gap:6px;margin-bottom:10px;}
+.prep button{flex:1;padding:12px 4px;border-radius:12px;border:1px solid var(--line);background:#151515;color:var(--text);font-weight:800;font-size:14px;cursor:pointer;}
+.prep button.on{background:rgba(31,191,107,.18);border-color:var(--green);color:#86efac;}
+.inc-act{display:flex;gap:10px;}
+.inc-act .btn{min-height:58px;font-size:17px;}
+.mute{position:absolute;top:calc(14px + env(safe-area-inset-top));right:14px;}
+
+/* ===== AUTH ===== */
+#auth{position:fixed;inset:0;z-index:90;background:radial-gradient(circle at 50% -10%,#2a1f05,#060606 60%);overflow-y:auto;display:none;
+  padding:calc(30px + env(safe-area-inset-top)) 18px 30px;}
+#auth.show{display:block;}
+.auth-wrap{max-width:420px;margin:0 auto;}
+.auth-logo{width:96px;height:96px;border-radius:24px;display:block;margin:0 auto 14px;box-shadow:0 0 40px rgba(227,179,65,.25);}
+.auth-t{text-align:center;font-size:24px;font-weight:900;}
+.auth-s{text-align:center;color:var(--muted);font-size:14px;margin:4px 0 20px;}
+.tabs{display:flex;background:#141414;border:1px solid var(--line);border-radius:14px;padding:4px;margin-bottom:12px;}
+.tabs button{flex:1;padding:11px;border:none;border-radius:11px;background:none;color:var(--muted);font-weight:800;font-size:14px;cursor:pointer;}
+.tabs button.on{background:var(--gold);color:#1a1200;}
+.auth-wrap .inp{margin-bottom:10px;}
+.mapbox{height:200px;border-radius:14px;overflow:hidden;margin:8px 0;border:1px solid var(--line);}
+.link{color:var(--gold2);font-size:13.5px;text-align:center;margin-top:12px;cursor:pointer;font-weight:700;}
+
+/* ===== HESAB ===== */
+.prof{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#1c1607,#111 60%);border:1px solid rgba(227,179,65,.25);border-radius:20px;padding:16px;margin-bottom:12px;}
+.prof img{width:64px;height:64px;border-radius:18px;object-fit:cover;background:#222;cursor:pointer;}
+.prof .n{font-size:18px;font-weight:800;}
+.prof .e{font-size:12.5px;color:var(--muted);margin-top:2px;}
+.list{background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden;margin-bottom:12px;}
+.li{display:flex;align-items:center;gap:12px;padding:14px;border-top:1px solid var(--line);cursor:pointer;}
+.li:first-child{border-top:none;}
+.li .ic{width:36px;height:36px;border-radius:11px;background:#1c1c1c;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;}
+.li .t{flex:1;font-weight:700;font-size:14.5px;}
+.li .t small{display:block;font-weight:500;font-size:12px;color:var(--muted);margin-top:2px;}
+.li .ar{color:var(--muted);}
+.li.danger .t{color:#fca5a5;}
+.staff-note{margin:0 0 12px;padding:12px 14px;border-radius:14px;background:linear-gradient(135deg,rgba(227,179,65,.16),rgba(227,179,65,.05));border:1px solid rgba(227,179,65,.4);font-size:13.5px;line-height:1.45;white-space:pre-wrap}
+.staff-note b{color:var(--gold2);display:block;font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px}
+.locked{opacity:.55}
+.sec{font-size:12px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:16px 4px 8px;}
+.li .sw{pointer-events:none;}
+.li .seg button{padding:8px 11px;font-size:12.5px;}
+
+/* ===== BİLDİRİŞLƏR ===== */
+.nt{display:flex;gap:10px;padding:12px 2px;border-top:1px solid var(--line);}
+.nt:first-child{border-top:none;}
+.nt .d{width:9px;height:9px;border-radius:50%;background:var(--gold);margin-top:6px;flex-shrink:0;}
+.nt.read .d{background:transparent;}
+.nt .t{font-weight:700;font-size:14px;}
+.nt .b{font-size:13px;color:var(--muted);margin-top:2px;}
+.nt .tm{font-size:11px;color:rgba(246,241,231,.35);margin-top:4px;}
+
+/* ===== TOAST / YÜKLƏNİR ===== */
+#toast{position:fixed;left:50%;bottom:calc(var(--nav) + 24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);z-index:120;
+  background:#1d1d1d;border:1px solid var(--line);color:var(--text);padding:12px 18px;border-radius:14px;font-weight:700;font-size:14px;opacity:0;
+  transition:.25s;pointer-events:none;max-width:90%;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+#toast.show{opacity:1;transform:translateX(-50%);}
+#loading{position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;flex-direction:column;gap:12px;}
+#loading.show{display:flex;}
+#loading .sp{width:44px;height:44px;border-radius:50%;border:4px solid rgba(255,255,255,.15);border-top-color:var(--gold);animation:spin .8s linear infinite;}
+#loading .tx{font-weight:700;font-size:14px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sound-bar{display:none;align-items:center;gap:10px;background:rgba(227,179,65,.1);border:1px solid rgba(227,179,65,.35);color:var(--gold2);
+  border-radius:14px;padding:12px 14px;margin-bottom:12px;font-weight:700;font-size:13.5px;cursor:pointer;}
+.sound-bar.show{display:flex;}
+
+/* ===== PREMIUM ƏLAVƏLƏR ===== */
+.topbar::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,rgba(227,179,65,.7),transparent);}
+.timer{margin:4px 14px 10px;padding:10px 12px;border-radius:12px;background:#171717;border:1px solid var(--line);}
+.timer .row1{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;}
+.timer .big{font-size:20px;font-weight:900;font-variant-numeric:tabular-nums;color:var(--gold2);}
+.timer .bar{height:6px;border-radius:3px;background:#262626;margin-top:8px;overflow:hidden;}
+.timer .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--green),var(--gold));border-radius:3px;transition:width 1s linear;}
+.timer.late{border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.08);}
+.timer.late .big{color:#fca5a5;}
+.timer.late .bar i{background:var(--red);}
+.cour{display:flex;align-items:center;gap:10px;margin:4px 14px 10px;padding:10px 12px;border-radius:12px;background:rgba(31,191,107,.08);border:1px solid rgba(31,191,107,.25);}
+.cour .av{width:38px;height:38px;border-radius:50%;background:#1d3b2b;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;}
+.cour .t{flex:1;min-width:0;font-size:13.5px;font-weight:700;}
+.cour .t small{display:block;font-weight:500;color:var(--muted);font-size:12px;margin-top:2px;}
+.cour a{text-decoration:none;}
+.skel{height:150px;border-radius:var(--r);margin-bottom:12px;background:linear-gradient(90deg,#121212 25%,#1b1b1b 50%,#121212 75%);background-size:200% 100%;animation:sk 1.2s infinite;}
+@keyframes sk{to{background-position:-200% 0}}
+/* Hesabat */
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;}
+.kpi .v{font-size:22px;font-weight:900;}
+.kpi .l{font-size:12px;color:var(--muted);margin-top:2px;}
+.kpi.gold{background:linear-gradient(135deg,#2a1f06,#141006);border-color:rgba(227,179,65,.35);}
+.kpi.gold .v{color:var(--gold2);}
+.card2{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:12px;}
+.card2 h4{font-size:15px;font-weight:800;margin-bottom:10px;}
+.chart{display:flex;align-items:flex-end;gap:4px;height:120px;padding-top:6px;}
+.chart .c{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;min-width:0;height:100%;}
+.chart .c b{display:block;width:100%;max-width:26px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,var(--gold2),var(--gold-deep));min-height:2px;}
+.chart .c span{font-size:9.5px;color:var(--muted);white-space:nowrap;}
+.top{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:14px;}
+.top:first-of-type{border-top:none;}
+.top .r{width:24px;height:24px;border-radius:8px;background:rgba(227,179,65,.15);color:var(--gold2);font-weight:900;font-size:12px;display:flex;align-items:center;justify-content:center;}
+.top .n{flex:1;font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.top .q{color:var(--muted);font-size:12.5px;white-space:nowrap;}
+.rl{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid var(--line);font-size:13.5px;}
+.rl:first-of-type{border-top:none;}
+.rl .id{font-weight:800;}
+.rl small{color:var(--muted);display:block;font-size:11.5px;margin-top:2px;}
+/* Mətbəx çeki (çap) */
+#printArea{display:none;}
+@media print{
+  body *{visibility:hidden!important;}
+  #printArea,#printArea *{visibility:visible!important;}
+  #printArea{display:block!important;position:absolute;left:0;top:0;width:var(--paper,72mm);padding:2mm;color:#000;background:#fff;font:12px/1.4 monospace;}
+  #printArea h1{font-size:16px;text-align:center;margin-bottom:4px;}
+  #printArea .c{text-align:center;} #printArea hr{border:none;border-top:1px dashed #000;margin:6px 0;}
+  #printArea .r{display:flex;justify-content:space-between;gap:6px;}
+  html,body{overflow:visible!important;height:auto!important;background:#fff!important;}
+}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;}}
+</style>
+</head>
+<body>
+
+<!-- ============ GİRİŞ / QEYDİYYAT ============ -->
+<div id="auth">
+  <div class="auth-wrap">
+    <img class="auth-logo" src="icon-192.png" alt="">
+    <div class="auth-t">BakuGo Restoran</div>
+    <div class="auth-s">İşçi paneli · restoranın hesabı ilə daxil olun</div>
+    <div id="loginBox">
+      <input class="inp" id="loginEmail" type="email" placeholder="E-poçt" autocomplete="username">
+      <input class="inp" id="loginPass" type="password" placeholder="Şifrə" autocomplete="current-password">
+      <button class="btn y" onclick="login()">Daxil ol</button>
+      <div class="link" style="font-weight:500;opacity:.7;cursor:default;">Giriş məlumatlarını restoran rəhbərindən alın</div>
+    </div>
+    <div class="link" style="opacity:.6;font-weight:500;" onclick="window.open('privacy-policy.html','_blank')">Gizlilik siyasəti</div>
+  </div>
+</div>
+
+<!-- ============ ÜST PANEL ============ -->
+<div class="topbar">
+  <div class="brand">
+    <img id="topLogo" src="icon-96.png" alt="">
+    <div class="t"><div class="n" id="topName">BakuGo Restoran</div><div class="s" id="topSub">Sifariş paneli</div></div>
+  </div>
+  <div class="status-pill" id="statusPill" onclick="toggleActive()"><span class="d"></span><span id="statusTxt">Bağlı</span></div>
+  <button class="ibtn" id="bellBtn" onclick="openSheet('notifSheet')">🔔<span class="b" id="bellBadge">0</span></button>
+</div>
+
+<!-- ============ MƏZMUN ============ -->
+<div id="main">
+
+  <!-- SİFARİŞLƏR -->
+  <section class="view active" id="v-orders">
+    <div class="sound-bar" id="soundBar" onclick="unlockSound(true)">🔊 Sifariş səsini aktiv etmək üçün bura toxunun</div>
+    <div class="staff-note" id="staffNote" style="display:none"></div>
+    <div class="stats">
+      <div class="stat"><div class="v" id="stToday">0</div><div class="l">Bu gün sifariş</div></div>
+      <div class="stat"><div class="v" id="stActive">0</div><div class="l">Aktiv</div></div>
+      <div class="stat g" id="stLateBox"><div class="v" id="stLate">0</div><div class="l">Gecikən</div></div>
+    </div>
+    <div class="chips" id="orderChips">
+      <button class="chip active new" data-f="new" onclick="setOrderFilter('new')">🆕 Yeni <span class="c" id="cNew">0</span></button>
+      <button class="chip" data-f="prep" onclick="setOrderFilter('prep')">🍳 Hazırlanır <span class="c" id="cPrep">0</span></button>
+      <button class="chip" data-f="courier" onclick="setOrderFilter('courier')">🛵 Kuryerdə <span class="c" id="cCour">0</span></button>
+      <button class="chip" data-f="done" onclick="setOrderFilter('done')">✅ Tarixçə</button>
+    </div>
+    <div id="ordersList"><div class="skel"></div><div class="skel"></div></div>
+  </section>
+
+  <!-- HESAB -->
+  <section class="view" id="v-account">
+    <div class="prof">
+      <img id="profImg" src="icon-192.png" alt="">
+      <div style="min-width:0;flex:1;">
+        <div class="n" id="profName">Restoran</div>
+        <div class="e" id="profEmail">—</div>
+        <div class="e" id="profAddr">—</div>
+      </div>
+    </div>
+    <div class="sec">Restoran</div>
+    <div class="list">
+      <div class="li" onclick="toggleActive()"><div class="ic">🟢</div><div class="t">Restoran statusu<small id="accStatus">—</small></div><span class="ar">›</span></div>
+      <div class="li" onclick="window.initPush && initPush(true)"><div class="ic">🔔</div><div class="t">Telefon bildirişləri<small id="accPush">Tətbiq bağlı olanda da yeni sifariş xəbəri</small></div><span class="ar">›</span></div>
+    </div>
+
+    <div class="sec">Səs</div>
+    <div class="list">
+      <div class="li" style="cursor:default"><div class="ic">🎵</div><div class="t">Sifariş melodiyası
+        <div class="seg" id="cfgTone" style="margin-top:8px">
+          <button data-v="marimba" onclick="setCfg('tone','marimba',true)">Marimba</button>
+          <button data-v="zeng" onclick="setCfg('tone','zeng',true)">Klassik zəng</button>
+          <button data-v="siren" onclick="setCfg('tone','siren',true)">Güclü (səs-küylü mətbəx)</button>
+        </div></div></div>
+      <div class="li" style="cursor:default"><div class="ic">🔊</div><div class="t">Səs səviyyəsi <span id="cfgVolTxt" style="color:var(--gold2)">100%</span>
+        <input type="range" id="cfgVol" min="20" max="100" step="10" style="width:100%;margin-top:10px;accent-color:#e3b341" oninput="setCfg('vol',+this.value)" onchange="Snd.order()"></div></div>
+      <div class="li" onclick="toggleCfg('notifSound')"><div class="ic">🎶</div><div class="t">Bildiriş səsi<small>Admin mesajları üçün yumşaq zəng</small></div><label class="sw"><input type="checkbox" id="cfg_notifSound" disabled><span></span></label></div>
+      <div class="li" onclick="Snd.order()"><div class="ic">▶️</div><div class="t">Sifariş səsini yoxla</div></div>
+    </div>
+
+    <div class="sec">Sifariş</div>
+    <div class="list">
+      <div class="li" onclick="setDefaultPrep()"><div class="ic">⏱️</div><div class="t">Standart hazırlıq vaxtı<small id="accPrep">15 dəq</small></div><span class="ar">›</span></div>
+      <div class="li" onclick="toggleCfg('lateAlert')"><div class="ic">⚠️</div><div class="t">Gecikmə xəbərdarlığı<small>Hazırlıq vaxtı keçəndə səs və bildiriş</small></div><label class="sw"><input type="checkbox" id="cfg_lateAlert" disabled><span></span></label></div>
+      <div class="li" onclick="toggleCfg('courierAlert')"><div class="ic">🛵</div><div class="t">Kuryer yaxınlaşanda xəbər ver<small>Kuryer restorana ~400 m qalanda</small></div><label class="sw"><input type="checkbox" id="cfg_courierAlert" disabled><span></span></label></div>
+      <div class="li" onclick="toggleCfg('autoAccept')"><div class="ic">⚡</div><div class="t">Avtomatik qəbul<small>Yeni sifariş standart vaxtla özü qəbul olunur. Yalnız çox yüklü vaxtlar üçün.</small></div><label class="sw"><input type="checkbox" id="cfg_autoAccept" disabled><span></span></label></div>
+    </div>
+
+    <div class="sec">Ekran və çap</div>
+    <div class="list">
+      <div class="li" onclick="toggleWake()"><div class="ic">💡</div><div class="t">Ekran sönməsin<small id="accWake">Açıq</small></div><label class="sw"><input type="checkbox" id="cfg_wake" disabled><span></span></label></div>
+      <div class="li" style="cursor:default"><div class="ic">🔠</div><div class="t">Yazı ölçüsü
+        <div class="seg" id="cfgFont" style="margin-top:8px">
+          <button data-v="1" onclick="setCfg('font',1)">Normal</button>
+          <button data-v="1.15" onclick="setCfg('font',1.15)">Böyük</button>
+          <button data-v="1.3" onclick="setCfg('font',1.3)">Çox böyük (planşet)</button>
+        </div></div></div>
+      <div class="li" onclick="toggleAutoPrint()"><div class="ic">🖨️</div><div class="t">Qəbul edəndə çeki çap et<small id="accPrint">Söndürülüb</small></div><label class="sw"><input type="checkbox" id="cfg_print" disabled><span></span></label></div>
+      <div class="li" style="cursor:default"><div class="ic">🧾</div><div class="t">Çek eni
+        <div class="seg" id="cfgPaper" style="margin-top:8px">
+          <button data-v="58" onclick="setCfg('paper',58)">58 mm</button>
+          <button data-v="80" onclick="setCfg('paper',80)">80 mm</button>
+        </div></div></div>
+    </div>
+
+    <div class="sec">Kömək</div>
+    <div class="list">
+      <div class="li" onclick="testIncoming()"><div class="ic">🧪</div><div class="t">Test sifarişi<small>Yeni işçi üçün: sifariş ekranını və səsi sınayın (heç nə göndərilmir)</small></div><span class="ar">›</span></div>
+      <div class="li" id="installBtn" onclick="installApp()"><div class="ic">📲</div><div class="t">Tətbiqi telefona quraşdır</div><span class="ar">›</span></div>
+      <div class="li" onclick="hardRefresh()"><div class="ic">🔄</div><div class="t">Tətbiqi yenilə<small>Ən son versiyanı yükləyir</small></div><span class="ar">›</span></div>
+      <div class="li" onclick="window.open('https://wa.me/994702484852','_blank')"><div class="ic">💬</div><div class="t">Dəstək (WhatsApp)</div><span class="ar">›</span></div>
+      <div class="li" onclick="window.open('privacy-policy.html','_blank')"><div class="ic">🔒</div><div class="t">Gizlilik siyasəti</div><span class="ar">›</span></div>
+    </div>
+
+    <div class="list">
+      <div class="li danger" onclick="if(confirm('Paneldən çıxmaq istəyirsiniz? Yeni sifarişlər bu cihaza gəlməyəcək.')) logout()"><div class="ic">🚪</div><div class="t">Çıxış</div></div>
+    </div>
+    <div style="text-align:center;color:var(--muted);font-size:11.5px;margin:6px 0 10px;">BakuGo Restoran · işçi paneli</div>
+  </section>
+</div>
+
+
+<!-- ============ ALT NAVİQASİYA ============ -->
+<nav class="nav">
+  <button class="active" data-v="orders" onclick="showView('orders')"><span class="ic">📦</span>Sifarişlər<span class="b" id="navNew">0</span></button>
+  <button data-v="account" onclick="showView('account')"><span class="ic">⚙️</span>Ayarlar</button>
+</nav>
+
+<!-- ============ VƏRƏQLƏR ============ -->
+<div class="scrim" id="scrim" onclick="closeSheets()"></div>
+
+<div class="sheet" id="notifSheet">
+  <div class="grab"></div>
+  <div class="hd"><h3>Bildirişlər</h3><button class="btn k sm" style="flex:0 0 auto;" onclick="markAllNotifsRead()">Hamısını oxu</button></div>
+  <div class="bd" id="notifList"><div class="empty"><div class="e">🔔</div>Hələ bildiriş yoxdur</div></div>
+</div>
+
+
+<div class="sheet" id="prepSheet">
+  <div class="grab"></div>
+  <div class="hd"><h3>Hazırlıq vaxtı</h3><button class="ibtn" onclick="closeSheets()">✕</button></div>
+  <div class="bd">
+    <p style="color:var(--muted);font-size:14px;margin-bottom:10px;">Sifariş neçə dəqiqəyə hazır olacaq? Müştəri sayğacı buna görə görəcək.</p>
+    <div class="prep" id="prepSheetBtns"></div>
+    <button class="btn g" style="width:100%;" onclick="confirmAcceptFromSheet()">✅ Qəbul et</button>
+  </div>
+</div>
+
+<div class="sheet" id="defPrepSheet">
+  <div class="grab"></div>
+  <div class="hd"><h3>Standart hazırlıq vaxtı</h3><button class="ibtn" onclick="closeSheets()">✕</button></div>
+  <div class="bd">
+    <p style="color:var(--muted);font-size:14px;margin-bottom:10px;">Yeni sifariş gələndə bu vaxt avtomatik seçilmiş olacaq.</p>
+    <div class="prep" id="defPrepBtns"></div>
+  </div>
+</div>
+
+<!-- ============ YENİ SİFARİŞ EKRANI ============ -->
+<div id="incoming">
+  <button class="ibtn mute" id="muteBtn" onclick="toggleMute()">🔊</button>
+  <div class="inc-top">
+    <div class="inc-pulse">🛎️</div>
+    <div class="inc-title">Yeni sifariş!</div>
+    <div class="inc-sub" id="incSub">—</div>
+  </div>
+  <div class="inc-card" id="incCard"></div>
+  <div class="inc-more" id="incMore"></div>
+  <div class="prep" id="incPrep"></div>
+  <div class="inc-act">
+    <button class="btn r" style="flex:0 0 34%;" onclick="rejectOrder(window.__incId)">Ləğv et</button>
+    <button class="btn g" onclick="acceptOrder(window.__incId, window.__incPrep)">✅ Qəbul et</button>
+  </div>
+</div>
+
+<div id="printArea"></div>
+<div id="toast"></div>
+<div id="loading"><div class="sp"></div><div class="tx" id="spinnerText"></div></div>
+<script>
+/* ===================== SƏSLƏR (Web Audio — fayl tələb etmir) =====================
+   Sifariş:   zəngin "marimba" akkordu, qəbul edilənə qədər hər 2.4 saniyədən bir təkrarlanır.
+   Bildiriş:  yumşaq "şüşə zəng" — bir dəfə. İki səs bir-birindən aydın seçilir. */
+window.Snd = (function(){
+  var ctx = null, master = null, loopT = null, muted = false;
+  function c(){
+    if(!ctx){
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
+      master = ctx.createGain(); master.gain.value = 1.0;
+      master.connect(comp); comp.connect(ctx.destination);
+    }
+    if(ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function note(t, f, dur, vol, type, partials){
+    var a = c();
+    (partials || [[1, 1]]).forEach(function(p){
+      var o = a.createOscillator(), g = a.createGain();
+      o.type = type || "sine"; o.frequency.setValueAtTime(f * p[0], t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol * p[1], t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur * (p[0] > 1 ? 0.45 : 1));
+      o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.05);
+    });
+  }
+  var MARIMBA = [[1, 1], [4, 0.28], [10, 0.06]];
+  var BELL = [[1, 1], [2.76, 0.32], [5.4, 0.12]];
+  function order(){
+    try{
+      var a = c(), t = a.currentTime + 0.02;
+      [659.25, 830.61, 987.77, 1318.51].forEach(function(f, i){ note(t + i * 0.11, f, 0.55, 0.55, "sine", MARIMBA); });
+      [659.25, 987.77, 1318.51].forEach(function(f){ note(t + 0.55, f, 0.9, 0.32, "sine", MARIMBA); });
+      [659.25, 830.61, 987.77, 1318.51].forEach(function(f, i){ note(t + 1.2 + i * 0.11, f, 0.55, 0.5, "sine", MARIMBA); });
+      if(navigator.vibrate) navigator.vibrate([350, 120, 350, 120, 600]);
+    }catch(e){}
+  }
+  function zeng(){
+    try{
+      var a = c(), t = a.currentTime + 0.02;
+      for(var r = 0; r < 2; r++) for(var k = 0; k < 8; k++){
+        note(t + r * 0.75 + k * 0.06, k % 2 ? 1318.5 : 1567.98, 0.09, 0.45, "triangle", [[1, 1], [2.76, 0.25]]);
+      }
+      if(navigator.vibrate) navigator.vibrate([250, 100, 250, 400, 250, 100, 250]);
+    }catch(e){}
+  }
+  function siren(){
+    try{
+      var a = c(), t = a.currentTime + 0.02;
+      for(var r = 0; r < 3; r++){
+        var o = a.createOscillator(), g = a.createGain(), t0 = t + r * 0.55;
+        o.type = "sawtooth"; o.frequency.setValueAtTime(700, t0); o.frequency.exponentialRampToValueAtTime(1500, t0 + 0.42);
+        g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.28, t0 + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+        o.connect(g); g.connect(master); o.start(t0); o.stop(t0 + 0.52);
+      }
+      if(navigator.vibrate) navigator.vibrate([600, 150, 600, 150, 600]);
+    }catch(e){}
+  }
+  function notif(){
+    try{
+      var a = c(), t = a.currentTime + 0.02;
+      note(t, 1046.5, 1.1, 0.42, "sine", BELL);
+      note(t + 0.16, 1567.98, 1.3, 0.3, "sine", BELL);
+      if(navigator.vibrate) navigator.vibrate(120);
+    }catch(e){}
+  }
+  return {
+    ctx: function(){ return ctx; },
+    unlock: c,
+    order: function(){ var tone = (window.CFG && CFG.tone) || "marimba"; (tone === "zeng" ? zeng : tone === "siren" ? siren : order)(); },
+    notif: function(force){ if(force || !window.CFG || CFG.notifSound) notif(); },
+    setVolume: function(v){ c(); master.gain.value = Math.max(0.05, Math.min(1, v)); },
+    startLoop: function(){ var self = this; if(loopT) return; if(!muted) self.order(); loopT = setInterval(function(){ if(!muted) self.order(); }, 2600); },
+    stopLoop: function(){ if(loopT){ clearInterval(loopT); loopT = null; } muted = false; },
+    setMuted: function(m){ muted = !!m; },
+    isMuted: function(){ return muted; }
+  };
+})();
+window.unlockSound = function(showMsg){
+  try{ Snd.unlock(); }catch(e){}
+  var ok = Snd.ctx() && Snd.ctx().state === "running";
+  var bar = document.getElementById("soundBar"); if(bar) bar.classList.toggle("show", !ok);
+  if(showMsg && ok){ Snd.notif(); toast("🔊 Səs aktivdir"); }
+};
+document.addEventListener("pointerdown", function(){ if(!Snd.ctx() || Snd.ctx().state !== "running") unlockSound(false); }, { passive: true });
+
+/* ===================== AYARLAR (bu cihazda saxlanılır) ===================== */
+window.CFG = (function(){
+  var d = { tone: "marimba", vol: 100, notifSound: true, lateAlert: true, courierAlert: true, autoAccept: false, font: 1, paper: 80 };
+  try { return Object.assign(d, JSON.parse(localStorage.getItem("bgRestCfg") || "{}")); } catch(e){ return d; }
+})();
+window.saveCfg = function(){ try { localStorage.setItem("bgRestCfg", JSON.stringify(CFG)); } catch(e){} };
+window.applyCfg = function(){
+  document.body.style.zoom = CFG.font || 1;
+  var seg = function(id, v){ document.querySelectorAll("#" + id + " button").forEach(function(b){ b.classList.toggle("on", String(b.dataset.v) === String(v)); }); };
+  seg("cfgTone", CFG.tone); seg("cfgFont", CFG.font); seg("cfgPaper", CFG.paper);
+  var vol = document.getElementById("cfgVol"); if(vol){ vol.value = CFG.vol; document.getElementById("cfgVolTxt").textContent = CFG.vol + "%"; }
+  ["notifSound","lateAlert","courierAlert","autoAccept"].forEach(function(k){ var e = document.getElementById("cfg_" + k); if(e) e.checked = !!CFG[k]; });
+  var w = document.getElementById("cfg_wake"); if(w) w.checked = !!window.__wakeOn;
+  var pr = document.getElementById("cfg_print"); if(pr) pr.checked = !!window.__autoPrint;
+  if(window.Snd) Snd.setVolume(CFG.vol / 100);
+};
+window.setCfg = function(k, v, preview){ CFG[k] = v; saveCfg(); applyCfg(); if(preview) Snd.order(); };
+window.toggleCfg = function(k){
+  if(k === "autoAccept" && !CFG.autoAccept && window.__staffCanAuto === false) return toast("🔒 Avtomatik qəbul sahib tərəfindən bağlanıb");
+  CFG[k] = !CFG[k]; saveCfg(); applyCfg();
+  var names = { notifSound: "Bildiriş səsi", lateAlert: "Gecikmə xəbərdarlığı", courierAlert: "Kuryer xəbərdarlığı", autoAccept: "Avtomatik qəbul" };
+  toast((CFG[k] ? "✅ " : "⛔ ") + names[k] + (CFG[k] ? " açıldı" : " söndürüldü"));
+};
+window.hardRefresh = async function(){
+  try{
+    if(window.caches){ const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }
+    if(navigator.serviceWorker){ const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r => r.update())); }
+  }catch(e){}
+  location.reload();
+};
+document.addEventListener("DOMContentLoaded", function(){ applyCfg(); });
+
+/* ===================== KİÇİK KÖMƏKÇİLƏR ===================== */
+window.toast = function(msg, ms){
+  var t = document.getElementById("toast"); if(!t) return;
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(window.__toastT); window.__toastT = setTimeout(function(){ t.classList.remove("show"); }, ms || 2600);
+};
+window.alert = function(m){ toast(String(m), 3500); };   /* bloklayan alert() əvəzinə */
+window.showLoading = function(){ document.getElementById("loading").classList.add("show"); };
+window.setLoadingText = function(m){ var e = document.getElementById("spinnerText"); if(e) e.textContent = m || ""; };
+window.hideLoading = function(){ document.getElementById("loading").classList.remove("show"); setLoadingText(""); };
+window.esc = function(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); };
+
+document.addEventListener("click", function(e){ if(e.target.closest && e.target.closest(".btn, .nav button, .chip, .status-pill") && navigator.vibrate) navigator.vibrate(8); }, { passive: true });
+window.showView = function(v){
+
+  document.querySelectorAll(".view").forEach(function(x){ x.classList.toggle("active", x.id === "v-" + v); });
+  document.querySelectorAll(".nav button").forEach(function(b){ b.classList.toggle("active", b.dataset.v === v); });
+  document.getElementById("main").scrollTop = 0;
+};
+window.openSheet = function(id){
+  closeSheets(true);
+  document.getElementById("scrim").classList.add("show");
+  document.getElementById(id).classList.add("show");
+};
+window.closeSheets = function(keepScrim){
+  document.querySelectorAll(".sheet.show").forEach(function(s){ s.classList.remove("show"); });
+  if(!keepScrim) document.getElementById("scrim").classList.remove("show");
+};
+
+/* ===================== EKRAN SÖNMƏSİN (Wake Lock) ===================== */
+window.__wakeOn = (function(){ try { return localStorage.getItem("bgRestWake") !== "0"; } catch(e){ return true; } })();
+var __wakeLock = null;
+async function __requestWake(){
+  try{
+    if(!window.__wakeOn || !("wakeLock" in navigator) || document.hidden) return;
+    if(__wakeLock) return;
+    __wakeLock = await navigator.wakeLock.request("screen");
+    __wakeLock.addEventListener("release", function(){ __wakeLock = null; });
+  }catch(e){ __wakeLock = null; }
+}
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) __requestWake(); });
+document.addEventListener("pointerdown", __requestWake, { passive: true });
+window.toggleWake = function(){
+  window.__wakeOn = !window.__wakeOn;
+  try { localStorage.setItem("bgRestWake", window.__wakeOn ? "1" : "0"); } catch(e){}
+  if(window.__wakeOn) __requestWake(); else if(__wakeLock){ __wakeLock.release(); __wakeLock = null; }
+  document.getElementById("accWake").textContent = window.__wakeOn ? "Açıq" : "Söndürülüb";
+  applyCfg();
+  toast(window.__wakeOn ? "💡 Ekran sönməyəcək" : "Ekran normal rejimdə");
+};
+window.installApp = async function(){
+  var e = window.__installEvt;
+  if(!e){
+    if(matchMedia("(display-mode: standalone)").matches || navigator.standalone) return toast("✅ Tətbiq artıq telefonda quraşdırılıb");
+    if(/iphone|ipad|ipod/i.test(navigator.userAgent)) return toast("Safari-də aşağıda «Paylaş» ⬆️ → «Ana ekrana əlavə et» seçin", 6000);
+    return toast("Chrome menyusu ⋮ → «Tətbiqi quraşdır» və ya «Ana ekrana əlavə et» seçin", 6000);
+  }
+  e.prompt(); try{ await e.userChoice; }catch(_){}
+  window.__installEvt = null; document.getElementById("installBtn").style.display = "none";
+};
+</script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+  import { getFirestore, collection, addDoc, setDoc, doc, onSnapshot, getDoc, updateDoc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBQIDfObXpxNa1hVAYDmigSi9u49y_BJQc",
+    authDomain: "bkaugo.firebaseapp.com",
+    projectId: "bkaugo",
+    storageBucket: "bkaugo.firebasestorage.app",
+    messagingSenderId: "568740538737",
+    appId: "1:568740538737:web:9b2ab40d0b728789a1aed0",
+    measurementId: "G-44T95W0PSX"
+  };
+  /* Ayrı ad: eyni telefonda müştəri/kuryer tətbiqi ilə giriş qarışmasın */
+  const app = initializeApp(firebaseConfig, "bakugo-restoran");
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  /* ===================== PUSH (FCM) ===================== */
+  window.initPush = async (interactive) => {
+    const say = (m) => { if (interactive) toast(m, 3500); };
+    try {
+      const msgMod = await import("https://www.gstatic.com/firebasejs/12.15.0/firebase-messaging.js");
+      if (!(await msgMod.isSupported().catch(() => false))) { say(/iphone|ipad/i.test(navigator.userAgent) ? "iPhone-da bildiriş üçün əvvəlcə tətbiqi «Ana ekrana əlavə et» ilə quraşdırın" : "Bu brauzer push bildirişlərini dəstəkləmir — Chrome istifadə edin"); return; }
+      if (!auth.currentUser) { say("Əvvəlcə daxil olun"); return; }
+      if (interactive) say("⏳ Bildirişlər qoşulur…");
+      let perm = Notification.permission;
+      if (perm === "default") { if (!interactive) return; perm = await Notification.requestPermission(); }
+      const el = document.getElementById("accPush");
+      if (perm !== "granted") { if(el) el.textContent = "Bağlıdır — açmaq üçün toxunun"; say("🔕 İcazə bağlıdır: Telefon Ayarlar → Tətbiqlər → Chrome/BakuGo Restoran → Bildirişlər"); return; }
+      const reg = (await (window.__swReady || Promise.resolve(null))) || await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+      await navigator.serviceWorker.ready;
+      const token = await msgMod.getToken(msgMod.getMessaging(app), { serviceWorkerRegistration: reg });
+      if (token) {
+        await setDoc(doc(db, "restaurants", auth.currentUser.uid), { fcmToken: token, fcmTokenUpdatedAt: Date.now() }, { merge: true });
+        if(el) el.textContent = "Aktivdir ✅";
+        say("🔔 Bildirişlər aktivdir");
+      }
+      msgMod.onMessage(msgMod.getMessaging(app), () => { /* tətbiq açıqdır: səsi Firestore dinləyicisi çalır */ });
+    } catch (e) { console.error("Push:", e); say("Bildiriş qoşulmadı: " + ((e && (e.code || e.message)) || "xəta")); }
+  };
+
+  function paintPushState(){
+    const el = document.getElementById("accPush"); if(!el || !("Notification" in window)) return;
+    const p = Notification.permission;
+    el.textContent = p === "granted" ? "Aktivdir ✅" : p === "denied" ? "Bağlıdır — açmaq üçün toxunun" : "Söndürülüb — yandırmaq üçün toxunun";
+  }
+  document.addEventListener("DOMContentLoaded", paintPushState); setTimeout(paintPushState, 0);
+  function authErrMsg(e){
+    const m = {
+      "auth/invalid-credential": "E-poçt və ya şifrə yanlışdır.",
+      "auth/wrong-password": "Şifrə yanlışdır.",
+      "auth/user-not-found": "Bu e-poçtla hesab tapılmadı.",
+      "auth/invalid-email": "E-poçt formatı düzgün deyil.",
+      "auth/email-already-in-use": "Bu e-poçt artıq istifadə olunur.",
+      "auth/weak-password": "Şifrə ən azı 6 simvol olmalıdır.",
+      "auth/too-many-requests": "Çox cəhd edildi. Bir az gözləyib yenidən yoxlayın.",
+      "auth/network-request-failed": "İnternet bağlantısında problem var.",
+      "auth/user-disabled": "Bu hesab bloklanıb."
+    };
+    return m[e && e.code] || (e && e.message) || "Naməlum xəta";
+  }
+
+  window.login = async function(){
+    const email = document.getElementById("loginEmail").value.trim();
+    const pass = document.getElementById("loginPass").value;
+    if(!email || !pass) return toast("E-poçt və şifrəni yazın");
+    try{ showLoading(); await signInWithEmailAndPassword(auth, email, pass); unlockSound(false); }
+    catch(e){ toast("Giriş xətası: " + authErrMsg(e), 4000); }
+    finally{ hideLoading(); }
+  };
+
+  window.logout = async function(){
+    try{ await signOut(auth); }catch(e){}
+    location.reload();
+  };
+
+  /* ===================== HESAB ===================== */
+  let currentUserData = null;
+  window.PH = "";
+  function thumb(url, w){ if(!url) return url; if(url.includes("res.cloudinary.com")) return url.replace("/upload/", `/upload/w_${w},q_auto:eco,f_auto,c_limit/`); return url; }
+
+  function paintAccount(){
+    const d = currentUserData || {};
+    const on = d.active !== false;
+    document.getElementById("topName").textContent = d.name || "BakuGo Restoran";
+    document.getElementById("profName").textContent = d.name || "Restoran";
+    document.getElementById("profEmail").textContent = "İşçi paneli";
+    document.getElementById("profAddr").textContent = "📍 " + (d.restaurantAddress || "—");
+    document.getElementById("accStatus").textContent = on ? "Açıq — sifariş qəbul edir" : "Bağlı — müştərilər sifariş verə bilmir";
+    document.getElementById("accWake").textContent = window.__wakeOn ? "Açıq" : "Söndürülüb";
+    document.getElementById("accPrep").textContent = (parseInt(d.defaultPrep, 10) || 15) + " dəq";
+    document.getElementById("accPrint").textContent = window.__autoPrint ? "Açıq" : "Söndürülüb";
+    const pill = document.getElementById("statusPill");
+    pill.classList.toggle("on", on);
+    document.getElementById("statusTxt").textContent = on ? "Açıq" : "Bağlı";
+    const sn = document.getElementById("staffNote"), note = String(d.staffNote || "").trim();
+    sn.style.display = note ? "block" : "none"; if(note){ sn.innerHTML = "<b>📌 Sahibdən qeyd</b>"; sn.appendChild(document.createTextNode(note)); }
+    const lk = (k, sel) => { const el = document.querySelector(sel); if(el) el.classList.toggle("locked", d[k] === false); };
+    lk("staffCanToggle", '[onclick="toggleActive()"]'); lk("staffCanPrep", '[onclick="setDefaultPrep()"]'); lk("staffCanAuto", '[onclick="toggleCfg(\'autoAccept\')"]');
+    if(d.staffCanAuto === false && window.CFG && CFG.autoAccept){ CFG.autoAccept = false; saveCfg(); applyCfg(); }
+    if(d.photoURL){ document.getElementById("profImg").src = thumb(d.photoURL, 160); document.getElementById("topLogo").src = thumb(d.photoURL, 96); }
+  }
+
+  window.toggleActive = async function(){
+    const user = auth.currentUser; if(!user || !currentUserData) return;
+    if(currentUserData.staffCanToggle === false) return toast("🔒 Restoranı açıb-bağlamaq sahib tərəfindən bağlanıb");
+    const newState = currentUserData.active === false;
+    if(!confirm(newState ? "Restoranı AÇIQ edək? Müştərilər yenidən sifariş verə biləcək." : "Restoranı müvəqqəti BAĞLAYAQ? Müştərilər yeni sifariş verə bilməyəcək.")) return;
+    try{
+      showLoading();
+      await updateDoc(doc(db,"restaurants",user.uid), { active: newState });
+      currentUserData.active = newState; paintAccount();
+      toast(newState ? "🟢 Restoran açıqdır" : "🔴 Restoran bağlandı");
+    }catch(e){ toast("Xəta: " + e.message); } finally{ hideLoading(); }
+  };
+
+  /* ===================== SİFARİŞLƏR ===================== */
+  const FINAL = ["delivered", "cancelled"];
+  let __orders = [];
+  let __orderFilter = "new";
+  let __ordersFirst = true;
+  let __knownNew = new Set();
+  window.__orderGeo = {}; window.__openOrderMaps = new Set(); window.__orderMapInstances = {};
+
+  function tms(o){
+    const c = o.createdAt; if(!c) return 0;
+    if(typeof c.toDate === "function") return c.toDate().getTime();
+    if(typeof c.seconds === "number") return c.seconds * 1000;
+    if(c instanceof Date) return c.getTime();
+    return typeof c === "number" ? c : 0;
+  }
+  function ago(ms){
+    if(!ms) return "";
+    const s = Math.floor((Date.now() - ms) / 1000);
+    if(s < 60) return "indicə"; if(s < 3600) return Math.floor(s / 60) + " dəq əvvəl";
+    if(s < 86400) return Math.floor(s / 3600) + " saat əvvəl";
+    return new Date(ms).toLocaleDateString("az-AZ", { day: "2-digit", month: "2-digit" }) + " " + new Date(ms).toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" });
+  }
+  function bucket(o){
+    if(o.status === "preparing" && o.restaurantAccepted !== true) return "new";
+    if(o.status === "preparing" || o.status === "searching_courier" || o.status === "courier_not_found") return "prep";
+    if(o.status === "courier_accepted" || o.status === "collected") return "courier";
+    return "done";
+  }
+  function statusBadge(o){
+    const acc = o.restaurantAccepted === true;
+    switch(o.status){
+      case "preparing": return acc ? `<span class="badge b-prep">🍳 Hazırlanır${o.prepMinutes ? " · " + o.prepMinutes + " dəq" : ""}</span>` : `<span class="badge b-new">🆕 Yeni</span>`;
+      case "searching_courier": return `<span class="badge b-search">🔍 Kuryer axtarılır</span>`;
+      case "courier_not_found": return `<span class="badge b-warn">⚠️ Kuryer tapılmadı</span>`;
+      case "courier_accepted": return `<span class="badge b-cour">🛵 Kuryer gəlir</span>`;
+      case "collected": return `<span class="badge b-cour">🛍️ Kuryer götürdü</span>`;
+      case "delivered": return `<span class="badge b-done">🏁 Çatdırıldı</span>`;
+      case "cancelled": return `<span class="badge b-done">❌ Ləğv edildi</span>`;
+      default: return `<span class="badge b-done">${esc(o.status || "")}</span>`;
+    }
+  }
+  function itemsHtml(o){
+    if(!Array.isArray(o.items) || !o.items.length) return `<div class="oi"><div class="n" style="opacity:.6">Məhsul siyahısı yoxdur</div></div>`;
+    const g = {};
+    o.items.forEach(i => {
+      const price = parseFloat(i.price) || 0, orig = parseFloat(i.originalPrice) || price, pct = parseFloat(i.discountPercent) || 0;
+      const k = (i.name || "") + "|" + price + "|" + pct;
+      if(!g[k]) g[k] = { name: i.name, price, orig, pct, n: 0 };
+      g[k].n += parseFloat(i.qty || i.quantity || 1) || 1;
+    });
+    return Object.values(g).map(it => {
+      const disc = it.pct > 0 && it.orig > it.price;
+      return `<div class="oi"><div class="q">${it.n}×</div><div class="n">${esc(it.name)}</div><div class="p">${disc ? `<s>${(it.orig * it.n).toFixed(2)}</s>` : ""}${(it.price * it.n).toFixed(2)} ₼</div></div>`;
+    }).join("");
+  }
+  function orderTotal(o){
+    return Array.isArray(o.items) ? o.items.reduce((s, i) => s + (parseFloat(i.price) || 0) * (parseFloat(i.qty || i.quantity || 1) || 1), 0) : parseFloat(o.totalAmount || o.price || 0) || 0;
+  }
+  function noteOf(o){ return o.orderNote || o.note || o.comment || ""; }
+
+  function cardHtml(o){
+    const id = o.id, b = bucket(o);
+    let act = "";
+    if(o.status === "preparing" && o.restaurantAccepted !== true){
+      act = `<button class="btn r" onclick="rejectOrder('${id}')">Ləğv</button><button class="btn g" onclick="askPrep('${id}')">✅ Qəbul et</button>`;
+    } else if(o.status === "preparing"){
+      act = `<button class="btn r" onclick="rejectOrder('${id}')">Ləğv</button><button class="btn y" onclick="updateOrderStatus('${id}','searching_courier',50)">🛵 Hazırdır — kuryer çağır</button>`;
+    } else if(o.status === "courier_not_found"){
+      act = `<button class="btn r" onclick="rejectOrder('${id}')">Ləğv</button><button class="btn b" onclick="retryCourierSearch('${id}')">🔄 Yenidən kuryer axtar</button>`;
+    } else if(o.status === "searching_courier"){
+      act = `<button class="btn r" onclick="rejectOrder('${id}')">Ləğv</button><button class="btn k" disabled>🔍 Kuryer axtarılır...</button>`;
+    }
+    const note = noteOf(o);
+    let extra = "";
+    if(o.status === "preparing" && o.restaurantAccepted === true && o.restaurantAcceptedAt){
+      const total = (parseInt(o.prepMinutes, 10) || 15) * 60000;
+      extra += `<div class="timer" data-from="${Number(o.restaurantAcceptedAt)}" data-total="${total}"><div class="row1"><span>⏱ Hazır olmalıdır</span><span class="big">--:--</span></div><div class="bar"><i></i></div></div>`;
+    }
+    if(o.courierId && (o.status === "courier_accepted" || o.status === "collected")){
+      const cc = window.__courierCache[o.courierId];
+      const la = parseFloat(o.lat), ln = parseFloat(o.lng), rl = parseFloat(o.restaurantLat), rg = parseFloat(o.restaurantLng);
+      let dist = "";
+      if(o.status === "courier_accepted" && !isNaN(la) && !isNaN(ln) && !isNaN(rl) && !isNaN(rg)){
+        const km = __hav(la, ln, rl, rg);
+        if(km < 0.4 && CFG.courierAlert && !__courierAlerted.has(o.id)){ __courierAlerted.add(o.id); setTimeout(() => __alert("🛵 Kuryer çatır — #" + o.id.substring(0, 6).toUpperCase() + " sifarişini təhvilə hazırlayın", "cour-" + o.id), 0); }
+        dist = km < 0.15 ? "Restorana çatıb 📍" : km.toFixed(1) + " km uzaqlıqda · ~" + Math.max(1, Math.round(km / 0.35)) + " dəq";
+      } else if(o.status === "collected") dist = "Sifarişi götürüb, müştəriyə gedir";
+      else dist = "Restorana gəlir";
+      extra += `<div class="cour"><div class="av">🛵</div><div class="t">${cc && cc.name ? esc(cc.name) : "Kuryer təyin olundu"}<small>${esc(dist)}</small></div>${cc && cc.phone ? `<a class="btn k sm" style="flex:0 0 auto" href="tel:${esc(cc.phone)}">📞</a>` : ""}</div>`;
+      __loadCourier(o.courierId);
+    }
+    const geoOk = !isNaN(parseFloat(o.customerLat)) || !isNaN(parseFloat(o.restaurantLat));
+    return `<div class="ord ${b === "new" ? "is-new" : ""}" id="ord-${id}">
+      <div class="ord-h"><div><div class="ord-id">#${esc(id.substring(0, 6).toUpperCase())}</div><div class="ord-time">🕒 ${ago(tms(o))}${o.customerName ? " · " + esc(o.customerName) : ""}</div></div>${statusBadge(o)}</div>
+      <div class="ord-items">${itemsHtml(o)}</div>
+      ${note ? `<div class="ord-note">📝 ${esc(note)}</div>` : ""}
+      ${extra}
+      <div class="ord-sum"><div class="t">Cəmi (məhsullar)</div><div class="v">${orderTotal(o).toFixed(2)} AZN</div></div>
+      ${o.couponCode ? `<div class="ord-sub">🎁 Kupon: ${esc(o.couponCode)}</div>` : ""}
+      ${o.paymentMethodLabel ? `<div class="ord-sub">💳 ${esc(o.paymentMethodLabel)}</div>` : ""}
+      ${act ? `<div class="ord-act">${act}</div>` : ""}
+      <div class="ord-act" style="padding-top:0">${geoOk && b !== "done" ? `<button class="btn k sm" onclick="toggleOrderMap('${id}')">🗺 Xəritə</button>` : ""}<button class="btn k sm" onclick="printTicket('${id}')">🖨️ Çek</button></div>
+      <div class="map-box" id="omap-${id}"></div>
+    </div>`;
+  }
+
+  function __hav(a1, o1, a2, o2){ const R = 6371, r = Math.PI / 180, dA = (a2 - a1) * r, dO = (o2 - o1) * r; const x = Math.sin(dA/2)**2 + Math.cos(a1*r) * Math.cos(a2*r) * Math.sin(dO/2)**2; return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x)); }
+  window.__courierCache = {};
+  async function __loadCourier(id){
+    if(window.__courierCache[id]) return;
+    window.__courierCache[id] = { loading: true };
+    try{
+      const s = await getDoc(doc(db, "couriers", id));
+      if(s.exists()){ const d = s.data(); window.__courierCache[id] = { name: [d.name, d.surname].filter(Boolean).join(" ") || d.fullName || "", phone: d.phone || "" }; window.__ordersHtml = null; renderOrders(); }
+    }catch(e){ /* qaydalar icazə vermirsə sadəcə "Kuryer təyin olundu" yazılır */ }
+  }
+  const __lateAlerted = new Set(), __courierAlerted = new Set();
+  function __alert(msg, tag){
+    Snd.notif(true);
+    toast(msg, 5000);
+    if(window.showSystemNotif) window.showSystemNotif(msg, "", tag);
+  }
+  function __tickTimers(){
+    document.querySelectorAll(".timer[data-from]").forEach(el => {
+      const from = +el.dataset.from, total = +el.dataset.total, left = from + total - Date.now();
+      const m = Math.floor(Math.abs(left) / 60000), sec = Math.floor(Math.abs(left) % 60000 / 1000);
+      const t = String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0");
+      el.classList.toggle("late", left < 0);
+      const oid = (el.closest(".ord") || {}).id || "";
+      if(left < 0 && CFG.lateAlert && oid && !__lateAlerted.has(oid)){ __lateAlerted.add(oid); __alert("⚠️ " + oid.replace("ord-", "#").toUpperCase().slice(0, 7) + " gecikir — hazırlıq vaxtı keçdi", "late-" + oid); }
+      el.querySelector(".row1 span").textContent = left < 0 ? "⚠️ Gecikir" : "⏱ Hazır olmalıdır";
+      el.querySelector(".big").textContent = left < 0 ? "+" + t : t;
+      el.querySelector(".bar i").style.width = Math.min(100, Math.max(0, (Date.now() - from) / total * 100)) + "%";
+    });
+  }
+  setInterval(() => { if(!document.hidden) __tickTimers(); }, 1000);
+
+  window.__autoPrint = (function(){ try { return localStorage.getItem("bgRestPrint") === "1"; } catch(e){ return false; } })();
+  window.toggleAutoPrint = function(){
+    window.__autoPrint = !window.__autoPrint;
+    try { localStorage.setItem("bgRestPrint", window.__autoPrint ? "1" : "0"); } catch(e){}
+    paintAccount(); applyCfg(); toast(window.__autoPrint ? "🖨️ Qəbul edəndə çek çap olunacaq" : "Avtomatik çap söndürüldü");
+  };
+  window.printTicket = function(id){
+    const o = __orders.find(x => x.id === id); if(!o) return;
+    const g = {};
+    (o.items || []).forEach(i => { const k = i.name + "|" + (parseFloat(i.price) || 0); if(!g[k]) g[k] = { n: i.name, p: parseFloat(i.price) || 0, q: 0 }; g[k].q += parseFloat(i.qty || i.quantity || 1) || 1; });
+    const rows = Object.values(g).map(x => `<div class="r"><span>${x.q} × ${esc(x.n)}</span><span>${(x.p * x.q).toFixed(2)}</span></div>`).join("");
+    const d = new Date(tms(o) || Date.now());
+    document.getElementById("printArea").innerHTML = `<h1>${esc((currentUserData && currentUserData.name) || "BakuGo")}</h1>
+      <div class="c">SİFARİŞ #${esc(id.substring(0, 6).toUpperCase())}</div>
+      <div class="c">${d.toLocaleDateString("az-AZ")} ${d.toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}</div>
+      ${o.prepMinutes ? `<div class="c">Hazırlıq: ${o.prepMinutes} dəq</div>` : ""}<hr>${rows}<hr>
+      <div class="r"><b>CƏMİ</b><b>${orderTotal(o).toFixed(2)} AZN</b></div>
+      ${noteOf(o) ? `<hr><div><b>QEYD:</b> ${esc(noteOf(o))}</div>` : ""}<hr><div class="c">BakuGo</div>`;
+    document.getElementById("printArea").style.setProperty("--paper", (CFG.paper === 58 ? 48 : 72) + "mm");
+    setTimeout(() => window.print(), 50);
+  };
+
+  window.setOrderFilter = function(f){
+    __orderFilter = f;
+    document.querySelectorAll("#orderChips .chip").forEach(c => c.classList.toggle("active", c.dataset.f === f));
+    renderOrders();
+  };
+
+  function renderOrders(){
+    const list = document.getElementById("ordersList"); if(!list) return;
+    const counts = { new: 0, prep: 0, courier: 0, done: 0 };
+    __orders.forEach(o => counts[bucket(o)]++);
+    document.getElementById("cNew").textContent = counts.new;
+    document.querySelector('#orderChips .chip[data-f="new"]').classList.toggle("has", counts.new > 0);
+    document.getElementById("cPrep").textContent = counts.prep;
+    document.getElementById("cCour").textContent = counts.courier;
+    const nb = document.getElementById("navNew"); nb.textContent = counts.new; nb.classList.toggle("show", counts.new > 0);
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const today = __orders.filter(o => tms(o) >= start.getTime() && o.status !== "cancelled");
+    document.getElementById("stToday").textContent = today.length;
+    const late = __orders.filter(o => o.status === "preparing" && o.restaurantAccepted === true && o.restaurantAcceptedAt && Date.now() > Number(o.restaurantAcceptedAt) + (parseInt(o.prepMinutes, 10) || 15) * 60000).length;
+    document.getElementById("stLate").textContent = late;
+    document.getElementById("stLateBox").style.borderColor = late ? "rgba(239,68,68,.6)" : "";
+    document.getElementById("stLateBox").classList.toggle("late", late > 0);
+    document.getElementById("stActive").textContent = counts.new + counts.prep + counts.courier;
+
+    let items = __orders.filter(o => bucket(o) === __orderFilter);
+    if(__orderFilter === "done") items = items.slice(0, 60);
+    if(!items.length){
+      const msg = { new: ["🛎️", "Yeni sifariş yoxdur.<br>Sifariş gələndə səs çalacaq və ekran açılacaq."], prep: ["🍳", "Hazırlanan sifariş yoxdur"], courier: ["🛵", "Kuryerdə sifariş yoxdur"], done: ["📋", "Tarixçə boşdur"] }[__orderFilter];
+      list.innerHTML = `<div class="empty"><div class="e">${msg[0]}</div>${msg[1]}</div>`;
+    } else {
+      const html = items.map(cardHtml).join("");
+      if(window.__ordersHtml !== html){ window.__ordersHtml = html; list.innerHTML = html; __tickTimers(); }
+    }
+
+    Array.from(window.__openOrderMaps).forEach(id => { const el = document.getElementById("omap-" + id); if(el && el.style.display !== "block") window.showOrderMap(id); });
+    updateIncoming();
+  }
+
+  /* ---- Yeni sifariş ekranı + səs ---- */
+  const PREPS = [10, 15, 20, 30, 45];
+  window.__incPrep = 15;
+  const defPrep = () => { const v = parseInt(currentUserData && currentUserData.defaultPrep, 10); return PREPS.includes(v) ? v : 15; };
+  window.setDefaultPrep = function(){
+    if(currentUserData && currentUserData.staffCanPrep === false) return toast("🔒 Standart vaxtı yalnız sahib dəyişə bilər");
+    prepBtns("defPrepBtns", defPrep(), async (n) => {
+      try{ await updateDoc(doc(db, "restaurants", auth.currentUser.uid), { defaultPrep: n }); closeSheets(); toast("⏱️ Standart vaxt: " + n + " dəq"); }
+      catch(e){ toast("Xəta: " + (e.code || e.message)); }
+    });
+    openSheet("defPrepSheet");
+  };
+
+  function prepBtns(containerId, selected, onPick){
+    const el = document.getElementById(containerId);
+    el.innerHTML = PREPS.map(m => `<button class="${m === selected ? "on" : ""}" data-m="${m}">${m} dəq</button>`).join("");
+    el.querySelectorAll("button").forEach(b => b.onclick = () => { el.querySelectorAll("button").forEach(x => x.classList.remove("on")); b.classList.add("on"); onPick(parseInt(b.dataset.m, 10)); });
+  }
+  window.testIncoming = function(){
+    window.__testMode = true; window.__incId = "__test"; window.__incPrep = defPrep();
+    prepBtns("incPrep", window.__incPrep, m => { window.__incPrep = m; });
+    document.getElementById("incSub").textContent = "TEST · 14.60 AZN · indicə";
+    document.getElementById("incCard").innerHTML = '<div style="padding:4px 12px">' + itemsHtml({ items: [{ name: "Toyuq dönər", price: 4.5, qty: 2 }, { name: "Kartof fri", price: 2.5, qty: 1 }, { name: "Ayran", price: 1.5, qty: 2 }] }) + '</div>' + `<div class="ord-note" style="margin:8px 12px">🧪 Bu, test sifarişidir — heç bir yerə göndərilmir</div>`;
+    document.getElementById("incMore").textContent = "";
+    document.getElementById("incoming").classList.add("show");
+    Snd.setMuted(false); Snd.startLoop();
+  };
+  function __endTest(msg){ window.__testMode = false; window.__incId = null; document.getElementById("incoming").classList.remove("show"); Snd.stopLoop(); toast(msg); updateIncoming(); }
+  function updateIncoming(){
+    if(window.__testMode) return;
+    const pend = __orders.filter(o => bucket(o) === "new").sort((a, b) => tms(a) - tms(b));
+    const inc = document.getElementById("incoming");
+    if(!pend.length){ inc.classList.remove("show"); Snd.stopLoop(); window.__incId = null; return; }
+    const o = pend[0];
+    if(CFG.autoAccept && !window.__testMode && !(currentUserData && currentUserData.staffCanAuto === false)){
+      if(!window.__autoBusy){ window.__autoBusy = true; Snd.order(); acceptOrder(o.id, defPrep()).finally(() => { window.__autoBusy = false; }); toast("⚡ Avtomatik qəbul edildi · " + defPrep() + " dəq"); }
+      return;
+    }
+    if(window.__incId !== o.id){
+      window.__incId = o.id; window.__incPrep = defPrep();
+      prepBtns("incPrep", window.__incPrep, m => { window.__incPrep = m; });
+    }
+    document.getElementById("incSub").textContent = "#" + o.id.substring(0, 6).toUpperCase() + " · " + orderTotal(o).toFixed(2) + " AZN · " + ago(tms(o));
+    document.getElementById("incCard").innerHTML = itemsHtml(o) + (noteOf(o) ? `<div class="ord-note" style="margin:8px 12px">📝 ${esc(noteOf(o))}</div>` : "");
+    document.getElementById("incMore").textContent = pend.length > 1 ? `+${pend.length - 1} yeni sifariş də gözləyir` : "";
+    inc.classList.add("show");
+    document.getElementById("muteBtn").textContent = Snd.isMuted() ? "🔇" : "🔊";
+    Snd.startLoop();
+  }
+  window.toggleMute = function(){ Snd.setMuted(!Snd.isMuted()); document.getElementById("muteBtn").textContent = Snd.isMuted() ? "🔇" : "🔊"; };
+
+  window.askPrep = function(id){
+    window.__prepFor = id; window.__sheetPrep = defPrep();
+    prepBtns("prepSheetBtns", window.__sheetPrep, m => { window.__sheetPrep = m; });
+    openSheet("prepSheet");
+  };
+  window.confirmAcceptFromSheet = function(){ closeSheets(); acceptOrder(window.__prepFor, window.__sheetPrep); };
+
+  function loadOrders(){
+    const user = auth.currentUser; if(!user) return;
+    onSnapshot(query(collection(db, "orders"), where("restaurantId", "==", user.uid)), (snap) => {
+      __orders = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).sort((a, b) => tms(b) - tms(a));
+      const newIds = new Set(__orders.filter(o => bucket(o) === "new").map(o => o.id));
+      if(!__ordersFirst){
+        let fresh = false; newIds.forEach(id => { if(!__knownNew.has(id)) fresh = true; });
+        if(fresh){
+          Snd.setMuted(false);
+          if(window.showSystemNotif) window.showSystemNotif("🛎️ Yeni sifariş!", "Qəbul etmək üçün toxunun", "order");
+          if(document.getElementById("v-orders").classList.contains("active")) setOrderFilter("new");
+        }
+      }
+      __knownNew = newIds; __ordersFirst = false;
+      __orders.forEach(o => {
+        window.__orderGeo[o.id] = { rLat: parseFloat(o.restaurantLat), rLng: parseFloat(o.restaurantLng), cLat: parseFloat(o.customerLat), cLng: parseFloat(o.customerLng), cAddr: o.customerAddress || "" };
+        if(o.status === "searching_courier") scheduleCourierExpiry(o.id, o);
+      });
+      renderOrders();
+    });
+    setInterval(() => { if(!document.hidden) { window.__ordersHtml = null; renderOrders(); } }, 60000);   /* "N dəq əvvəl" yazıları üçün */
+  }
+
+  window.showOrderMap = function(id){
+    const el = document.getElementById("omap-" + id), g = window.__orderGeo[id];
+    if(!el || !g) return;
+    el.style.display = "block";
+    if(window.__orderMapInstances[id]){ try{ window.__orderMapInstances[id].remove(); }catch(e){} }
+    const okR = !isNaN(g.rLat) && !isNaN(g.rLng), okC = !isNaN(g.cLat) && !isNaN(g.cLng);
+    if(!okR && !okC){ el.innerHTML = '<div class="empty" style="padding:20px">Koordinat yoxdur</div>'; return; }
+    el.innerHTML = "";
+    const m = L.map(el).setView(okC ? [g.cLat, g.cLng] : [g.rLat, g.rLng], 14);
+    const pts = [];
+    if(okR){ L.marker([g.rLat, g.rLng]).addTo(m).bindPopup("🏪 Restoran"); pts.push([g.rLat, g.rLng]); }
+    if(okC){ L.marker([g.cLat, g.cLng]).addTo(m).bindPopup("🏠 Müştəri" + (g.cAddr ? ": " + esc(g.cAddr) : "")); pts.push([g.cLat, g.cLng]); }
+    if(pts.length > 1){ L.polyline(pts, { color: "#e3b341", weight: 3, dashArray: "6 6" }).addTo(m); m.fitBounds(pts, { padding: [30, 30] }); }
+    window.__orderMapInstances[id] = m;
+  };
+  window.toggleOrderMap = function(id){
+    const el = document.getElementById("omap-" + id); if(!el) return;
+    if(window.__openOrderMaps.has(id)){
+      window.__openOrderMaps.delete(id); el.style.display = "none";
+      if(window.__orderMapInstances[id]){ try{ window.__orderMapInstances[id].remove(); }catch(e){} delete window.__orderMapInstances[id]; }
+    } else { window.__openOrderMaps.add(id); window.showOrderMap(id); }
+  };
+
+  window.acceptOrder = async function(orderId, prepMinutes){
+    if(orderId === "__test") return __endTest("✅ Test: sifariş " + (prepMinutes || 15) + " dəqiqəyə qəbul edildi. Hər şey işləyir!");
+    if(!orderId) return;
+    try{
+      showLoading(); Snd.stopLoop();
+      const cur = await getDoc(doc(db, "orders", orderId));
+      if(!cur.exists() || cur.data().status !== "preparing") return toast("Bu sifariş artıq ləğv edilib və ya dəyişib");
+      await updateDoc(doc(db, "orders", orderId), { restaurantAccepted: true, progress: 20, prepMinutes: prepMinutes || 15, restaurantAcceptedAt: Date.now() });
+      toast("✅ Qəbul edildi · " + (prepMinutes || 15) + " dəq");
+      if(window.__autoPrint) setTimeout(() => printTicket(orderId), 400);
+      setOrderFilter("prep");
+    }catch(e){ toast("Xəta: " + e.message); } finally{ hideLoading(); }
+  };
+
+  window.updateOrderStatus = async function(orderId, statusCode, progressVal){
+    try{
+      showLoading();
+      const cur = await getDoc(doc(db, "orders", orderId));
+      if(!cur.exists() || cur.data().status !== "preparing" || cur.data().restaurantAccepted !== true) return toast("Sifarişin statusu dəyişib");
+      const upd = { status: statusCode, progress: progressVal };
+      if(statusCode === "searching_courier"){ upd.searchStartedAt = Date.now(); upd.searchAttempts = 1; }
+      await updateDoc(doc(db, "orders", orderId), upd);
+      toast("🛵 Kuryer axtarılır...");
+    }catch(e){ toast("Xəta: " + e.message); } finally{ hideLoading(); }
+  };
+
+  const COURIER_SEARCH_MS = 60000, __expireTimers = {};
+  window.expireCourierSearch = async function(orderId){
+    try{
+      const ref = doc(db, "orders", orderId), cur = await getDoc(ref);
+      if(!cur.exists()) return;
+      const d = cur.data();
+      if(d.status !== "searching_courier" || d.courierId) return;
+      const st = parseFloat(d.searchStartedAt) || 0;
+      if(st && Date.now() - st < COURIER_SEARCH_MS - 500) return;
+      await updateDoc(ref, { status: "courier_not_found", progress: 45, searchExpiredAt: Date.now() });
+    }catch(e){ console.error(e); }
+  };
+  function scheduleCourierExpiry(orderId, o){
+    if(__expireTimers[orderId]) return;
+    const st = parseFloat(o.searchStartedAt) || Date.now();
+    __expireTimers[orderId] = setTimeout(() => { delete __expireTimers[orderId]; window.expireCourierSearch(orderId); }, Math.max(0, COURIER_SEARCH_MS - (Date.now() - st)) + 800);
+  }
+  window.retryCourierSearch = async function(orderId){
+    try{
+      showLoading();
+      const ref = doc(db, "orders", orderId), cur = await getDoc(ref);
+      if(!cur.exists() || cur.data().status !== "courier_not_found") return toast("Sifarişin statusu dəyişib");
+      await updateDoc(ref, { status: "searching_courier", progress: 50, searchStartedAt: Date.now(), searchAttempts: (parseInt(cur.data().searchAttempts) || 1) + 1 });
+      toast("🔄 Kuryer yenidən axtarılır");
+    }catch(e){ toast("Xəta: " + e.message); } finally{ hideLoading(); }
+  };
+  window.rejectOrder = async function(orderId){
+    if(orderId === "__test") return __endTest("Test bitdi");
+    if(!orderId || !confirm("Bu sifarişi ləğv etmək istədiyinizə əminsiniz?")) return;
+    try{
+      showLoading();
+      const cur = await getDoc(doc(db, "orders", orderId));
+      if(cur.exists() && ["courier_accepted", "collected", "delivered", "cancelled"].includes(cur.data().status)) return toast("Bu sifarişi artıq ləğv etmək olmaz");
+      await updateDoc(doc(db, "orders", orderId), { status: "cancelled", progress: 0, cancelReason: "Restoran tərəfindən ləğv edildi", cancelledAt: Date.now() });
+      toast("Sifariş ləğv edildi");
+    }catch(e){ toast("Xəta: " + e.message); } finally{ hideLoading(); }
+  };
+
+  /* ===================== BİLDİRİŞLƏR ===================== */
+  const READ_KEY = "bakugoRestReadNotifIds";
+  let __nT = [], __nB = [], __nFirstT = true, __nFirstB = true;
+  const readIds = () => { try { return new Set(JSON.parse(localStorage.getItem(READ_KEY) || "[]")); } catch(e){ return new Set(); } };
+  const saveRead = (s) => { try { localStorage.setItem(READ_KEY, JSON.stringify([...s].slice(-300))); } catch(e){} };
+  const nts = (n) => (n.createdAt && n.createdAt.toMillis) ? n.createdAt.toMillis() : (n.createdAt || 0);
+  function renderNotifs(){
+    const byId = new Map(); [...__nT, ...__nB].forEach(n => byId.set(n.id, n));
+    const all = Array.from(byId.values()).sort((a, b) => nts(b) - nts(a)).slice(0, 60);
+    const r = readIds(), unread = all.filter(n => !r.has(n.id)).length;
+    const bb = document.getElementById("bellBadge"); bb.textContent = unread > 9 ? "9+" : unread; bb.classList.toggle("show", unread > 0);
+    const el = document.getElementById("notifList");
+    el.innerHTML = all.length ? all.map(n => `<div class="nt ${r.has(n.id) ? "read" : ""}" onclick="markNotifRead('${n.id}')"><div class="d"></div><div><div class="t">${esc(n.title || "Bildiriş")}</div><div class="b">${esc(n.body || "")}</div><div class="tm">${ago(nts(n))}</div></div></div>`).join("")
+      : `<div class="empty"><div class="e">🔔</div>Hələ bildiriş yoxdur</div>`;
+  }
+  window.markNotifRead = (id) => { const r = readIds(); r.add(id); saveRead(r); renderNotifs(); };
+  window.markAllNotifsRead = () => { const r = readIds(); [...__nT, ...__nB].forEach(n => r.add(n.id)); saveRead(r); renderNotifs(); };
+  function onNewNotif(snap, first, keep){
+    if(first) return;
+    snap.docChanges().forEach(ch => {
+      if(ch.type !== "added") return;
+      if(keep && !keep(ch.doc.data())) return;
+      if(window.__suppressNotif){ window.__suppressNotif = false; return; }
+      const n = ch.doc.data();
+      Snd.notif(false);
+      const bell = document.getElementById("bellBtn"); bell.classList.remove("ring"); void bell.offsetWidth; bell.classList.add("ring");
+      toast("🔔 " + (n.title || "Yeni bildiriş"));
+      if(window.showSystemNotif) window.showSystemNotif(n.title || "BakuGo", n.body || "", "n-" + ch.doc.id);
+    });
+  }
+  function listenNotifications(user){
+    onSnapshot(query(collection(db, "notifications"), where("restaurantId", "==", user.uid)), (s) => {
+      const keepT = n => n.audience !== "customer";
+      __nT = s.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(keepT); renderNotifs(); onNewNotif(s, __nFirstT, keepT); __nFirstT = false;
+    }, () => {});
+    onSnapshot(query(collection(db, "notifications"), where("audience", "in", ["restaurant", "all"])), (s) => {
+      /* Admin bir restorana göndərəndə sənəddə restaurantId olur — başqa restoranlara göstərilmir */
+      const keepB = n => !n.restaurantId || n.restaurantId === user.uid;
+      __nB = s.docs.map(d => Object.assign({ id: d.id }, d.data())).filter(keepB); renderNotifs(); onNewNotif(s, __nFirstB, (n) => keepB(n) && n.restaurantId !== user.uid); __nFirstB = false;
+    }, () => {});
+  }
+
+  /* ===================== SESSİYA ===================== */
+  let sessionUid = null;
+  onAuthStateChanged(auth, async (user) => {
+    const authEl = document.getElementById("auth");
+    if(!user){ sessionUid = null; authEl.classList.add("show"); return; }
+    if(sessionUid === user.uid) return;
+    let snap = null;
+    try{ snap = await getDoc(doc(db, "restaurants", user.uid)); }
+    catch(e){ authEl.classList.add("show"); return toast("Bağlantı xətası — interneti yoxlayın", 4000); }
+    if(!snap.exists()){
+      try{ await signOut(auth); }catch(e){}
+      authEl.classList.add("show");
+      return toast("Bu hesab restoran hesabı deyil", 4000);
+    }
+    sessionUid = user.uid;
+    currentUserData = snap.data();
+    authEl.classList.remove("show");
+    paintAccount();
+    onSnapshot(doc(db, "restaurants", user.uid), (s) => { if(s.exists()){ currentUserData = s.data(); window.__staffCanAuto = currentUserData.staffCanAuto; paintAccount(); } });
+    loadOrders(); listenNotifications(user);
+    window.initPush(false);
+    unlockSound(false);
+    setTimeout(() => { if(!Snd.ctx() || Snd.ctx().state !== "running") document.getElementById("soundBar").classList.add("show"); }, 1500);
+  });
+</script>
+<script>
+/* Telefonun bildiriş panelində sistem bildirişi (tətbiq arxa fonda olanda) */
+window.showSystemNotif = async function(title, body, tag){
+  try{
+    if(!("Notification" in window) || Notification.permission !== "granted" || !document.hidden) return;
+    var reg = ("serviceWorker" in navigator) ? await navigator.serviceWorker.ready : null;
+    var o = { body: body || "", icon: "icon-192.png", badge: "icon-96.png", tag: tag || "bakugo", renotify: true, requireInteraction: tag === "order", vibrate: [350,120,350,120,600], data: { url: "./" } };
+    if(reg && reg.showNotification) await reg.showNotification(title, o); else new Notification(title, o);
+  }catch(e){}
+};
+</script>
+</body>
+</html>
