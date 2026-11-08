@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>BakuGo — Restoran Sahibi</title>
+<link rel="manifest" href="manifest-sahib.json">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="BakuGo Sahib">
+<style>
+:root{
+  --bg:#0b0b0d; --card:#151518; --card2:#1c1c20; --line:rgba(255,255,255,.08);
+  --or:#ff7a00; --gold:#ffd700; --ok:#00e676; --bad:#ff5252; --mut:rgba(255,255,255,.62);
+  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:#fff;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-size:14px;line-height:1.4;overflow-x:hidden}
+.hide{display:none!important}
+button{font-family:inherit;cursor:pointer;border:none;color:inherit}
+input{font-family:inherit;font-size:15px;width:100%;padding:13px 14px;border-radius:12px;border:1px solid #2c2c32;background:#101013;color:#fff;outline:none}
+input:focus{border-color:var(--or)}
+.btn{display:block;width:100%;padding:13px;border-radius:12px;font-weight:700;font-size:15px;background:linear-gradient(135deg,#ff7a00,#ff9d3b);color:#fff;margin-top:10px}
+.btn.sec{background:#26262b}
+.btn.red{background:#c62828}
+.btn:disabled{opacity:.5}
+.title-grad{background:linear-gradient(45deg,#ff7a00,#ffd700);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+/* Giriş / PIN */
+.gate{min-height:100%;display:flex;align-items:center;justify-content:center;padding:calc(20px + var(--sat)) 18px 20px}
+.gate-box{width:100%;max-width:400px;background:linear-gradient(160deg,#161616,#0a0a0a 60%,#141005);border:1px solid rgba(255,215,0,.22);border-radius:20px;padding:24px 20px;box-shadow:0 0 40px rgba(255,122,0,.18)}
+.gate h1{font-size:25px;text-align:center;margin-bottom:4px}
+.gate p.sub{text-align:center;color:var(--mut);margin-bottom:16px;font-size:13px}
+.gate input{margin-top:10px}
+.err{color:var(--bad);font-size:13px;margin-top:10px;text-align:center;min-height:16px}
+.link{color:var(--or);text-align:center;margin-top:14px;font-size:13px;cursor:pointer}
+.pin-in{text-align:center;letter-spacing:10px;font-size:22px;font-weight:700}
+
+/* Əsas çərçivə */
+#appRoot{display:flex;flex-direction:column;height:100%}
+header{padding:calc(10px + var(--sat)) 14px 10px;display:flex;align-items:center;gap:10px;background:#0f0f12;border-bottom:1px solid var(--line)}
+.logo{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#ff7a00,#ffd700);display:flex;align-items:center;justify-content:center;font-size:20px;flex:none;overflow:hidden}
+.logo img{width:100%;height:100%;object-fit:cover}
+.hd{flex:1;min-width:0}
+.hd b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hd small{color:var(--mut);font-size:11.5px}
+.pill{padding:7px 11px;border-radius:20px;font-weight:700;font-size:12px;background:#1d1d22;border:1px solid #333}
+.pill.on{color:var(--ok);border-color:rgba(0,230,118,.5)}
+.pill.off{color:var(--bad);border-color:rgba(255,82,82,.5)}
+.ibtn{width:38px;height:38px;border-radius:50%;background:#1d1d22;font-size:16px;flex:none}
+main{flex:1;overflow-y:auto;padding:14px 14px 20px;-webkit-overflow-scrolling:touch}
+.view{display:none}.view.active{display:block}
+nav{display:flex;background:#0f0f12;border-top:1px solid var(--line);padding:6px 4px calc(6px + var(--sab))}
+nav button{flex:1;background:none;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;font-size:10.5px;color:var(--mut);border-radius:10px;position:relative}
+nav button span:first-child{font-size:20px}
+nav button.active{color:var(--or);font-weight:700}
+.badge{position:absolute;top:0;right:22%;background:var(--bad);color:#fff;border-radius:10px;font-size:10px;padding:1px 6px;font-weight:700}
+
+/* Komponentlər */
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+.card h3{font-size:14px;margin-bottom:10px;color:var(--gold)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:10px}
+.chip{flex:none;padding:7px 13px;border-radius:20px;background:#17171b;border:1px solid #2c2c32;color:#ddd;font-size:12.5px}
+.chip.active{background:var(--or);border-color:var(--or);color:#fff;font-weight:700}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:13px}
+.kpi small{color:var(--mut);font-size:11.5px;display:block}
+.kpi b{font-size:20px;display:block;margin:3px 0}
+.kpi i{font-style:normal;font-size:11.5px;color:var(--mut)}
+.kpi.wide{grid-column:1/3;background:linear-gradient(135deg,#241a00,#1a1a1a 55%,#241a00);border-color:rgba(255,215,0,.35)}
+.up{color:var(--ok)}.dn{color:var(--bad)}
+.bars{display:flex;align-items:flex-end;gap:7px;height:150px}
+.bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;font-size:10.5px}
+.bf{width:100%;max-width:34px;border-radius:7px 7px 3px 3px;background:linear-gradient(180deg,#ff9d3b,#ff7a00);min-height:3px}
+.bv{color:var(--mut);margin-bottom:3px;font-size:10px}
+.bl{color:var(--mut);text-align:center;margin-top:5px;line-height:1.15}
+.row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:none}
+.row .rk{width:24px;height:24px;border-radius:50%;background:#26262b;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
+.row .rn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .rv{text-align:right;font-weight:700;font-size:13px}
+.row .rv small{display:block;color:var(--mut);font-weight:400;font-size:11px}
+.empty{text-align:center;color:var(--mut);padding:22px 8px;font-size:13px}
+.segs{display:flex;gap:8px;margin-bottom:10px}
+.seg{flex:1;padding:10px 4px;border-radius:12px;background:#17171b;border:1px solid #2c2c32;font-size:12.5px;font-weight:700;color:#ddd}
+.seg.active{background:rgba(255,122,0,.16);border-color:var(--or);color:var(--or)}
+.ord{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ok);border-radius:14px;padding:12px;margin-bottom:9px}
+.ord.rej{border-left-color:var(--bad)}.ord.act{border-left-color:var(--or)}
+.ord .top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.ord .oid{font-weight:800;color:var(--gold)}
+.ord .amt{font-weight:800}
+.ord .meta{color:var(--mut);font-size:12px;margin-top:3px}
+.ord .prods{margin-top:6px;font-size:12.5px}
+.ord .det{display:none;margin-top:8px;padding-top:8px;border-top:1px dashed #333;font-size:12.5px}
+.ord.open .det{display:block}
+.ord .det div{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+.tag{display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;background:rgba(255,122,0,.15);color:var(--or)}
+.tag.ok{background:rgba(0,230,118,.14);color:var(--ok)}.tag.bad{background:rgba(255,82,82,.14);color:var(--bad)}
+.prod{display:flex;gap:11px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:9px}
+.prod img{width:56px;height:56px;border-radius:12px;object-fit:cover;background:#222;flex:none}
+.prod .pi{flex:1;min-width:0}
+.prod .pi b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prod .pi small{color:var(--mut);font-size:11.5px}
+.prod .old{text-decoration:line-through;opacity:.55;margin-right:6px}
+.prod .pe{padding:8px 12px;border-radius:10px;background:#26262b;font-size:12px;font-weight:700}
+.bal{background:linear-gradient(135deg,#241a00,#1a1a1a 45%,#241a00);border:1px solid rgba(255,215,0,.45);border-radius:18px;padding:18px;text-align:center;margin-bottom:12px}
+.bal small{color:var(--gold);font-weight:700}
+.bal h2{font-size:32px;color:var(--gold);margin-top:4px}
+.hi{display:flex;justify-content:space-between;align-items:center;padding:11px 12px;margin-top:8px;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:12px}
+.hi small{color:var(--mut)}
+.ws-pending{color:#ffb347}.ws-approved{color:var(--ok)}.ws-rejected{color:var(--bad)}.ws-cancelled{color:#999}
+.cbtn{margin-top:4px;padding:5px 10px;border-radius:8px;background:#2a2a2f;font-size:11.5px}
+.pf{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.pf:first-child{border-top:none}.pf span{color:var(--mut)}.pf b{text-align:right;font-weight:600}
+.big-av{width:84px;height:84px;border-radius:50%;margin:0 auto 10px;background:linear-gradient(135deg,#ff7a00,#ffd700);display:flex;align-items:center;justify-content:center;font-size:36px;overflow:hidden}
+.big-av img{width:100%;height:100%;object-fit:cover}
+
+/* Modal */
+#modalBack{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+#modalBack.show{display:flex}
+#modalBox{width:100%;max-width:380px;max-height:88vh;overflow-y:auto;background:#141416;border:1px solid rgba(255,215,0,.25);border-radius:18px;padding:20px}
+#modalBox h3{text-align:center;margin-bottom:12px}
+#modalBox label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+#loader{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:99}
+#loader.show{display:flex}
+#loader div{width:42px;height:42px;border:4px solid #333;border-top-color:var(--or);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#toast{position:fixed;left:50%;bottom:calc(84px + var(--sab));transform:translateX(-50%);background:#222;border:1px solid #444;padding:10px 16px;border-radius:12px;font-size:13px;z-index:120;display:none;max-width:90%;text-align:center}
+
+select,textarea{font-family:inherit;font-size:15px;width:100%;padding:13px 14px;border-radius:12px;border:1px solid #2c2c32;background:#101013;color:#fff;outline:none}
+select:focus,textarea:focus{border-color:var(--or)}
+textarea{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+.menu-actions{display:flex;gap:8px;margin-bottom:10px}
+.menu-actions .btn{margin-top:0;flex:1;padding:11px 6px;font-size:13.5px}
+#modalBox.wide{max-width:780px}
+.pe-row{display:flex;gap:6px;flex-direction:column}
+.hint{color:var(--mut);font-size:11.5px;margin-top:6px}
+.bt{width:100%;border-collapse:collapse;font-size:12.5px}
+.bt th{color:var(--mut);font-weight:600;font-size:11.5px}
+.bt td,.bt th{padding:6px 5px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+.bt img{width:36px;height:36px;border-radius:8px;object-fit:cover;display:block;background:#222}
+.okc{color:var(--ok);font-weight:700}.erc{color:var(--bad);font-weight:700}.wac{color:#ffb347;font-size:11.5px}
+.prod.stopped{opacity:.55}
+.pe.st-on{background:rgba(0,230,118,.12);color:var(--ok)}.pe.st-off{background:rgba(255,82,82,.14);color:var(--bad)}
+.sw-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+.sw-row:first-of-type{border-top:none}.sw-row small{display:block;color:var(--mut);font-size:11.5px}
+.tg{flex:none;width:48px;height:28px;border-radius:20px;background:#333;position:relative;transition:.2s}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s}
+.tg.on{background:var(--ok)}.tg.on::after{left:23px}
+.prev{width:100%;height:140px;object-fit:cover;border-radius:12px;background:#222;margin-top:8px}
+</style>
+</head>
+<body>
+
+<div id="loader"><div></div></div>
+<div id="toast"></div>
+
+<!-- GİRİŞ -->
+<section id="authScreen" class="gate hide">
+  <div class="gate-box">
+    <h1 class="title-grad">👑 BakuGo Sahib</h1>
+    <p class="sub">Restoran sahibi paneli</p>
+    <input id="lEmail" type="email" placeholder="Gmail" autocomplete="username">
+    <input id="lPass" type="password" placeholder="Şifrə" autocomplete="current-password">
+    <button class="btn" data-act="login">Daxil ol</button>
+    <div class="err" id="lErr"></div>
+    <div class="link" data-act="forgot">Şifrəni unutmusunuz?</div>
+  </div>
+</section>
+
+<!-- PIN -->
+<section id="pinScreen" class="gate hide">
+  <div class="gate-box">
+    <h1 class="title-grad" id="pinTitle">🔐 Sahib PIN-i</h1>
+    <p class="sub" id="pinSub"></p>
+    <input id="pin1" class="pin-in" type="password" inputmode="numeric" maxlength="8" placeholder="••••" autocomplete="off">
+    <input id="pin2" class="pin-in hide" type="password" inputmode="numeric" maxlength="8" placeholder="Təkrar" autocomplete="off">
+    <button class="btn" data-act="pinOk" id="pinBtn">Davam et</button>
+    <div class="err" id="pinErr"></div>
+    <div class="link" data-act="logout">Hesabdan çıx</div>
+  </div>
+</section>
+
+<!-- ƏSAS -->
+<div id="appRoot" class="hide">
+  <header>
+    <div class="logo" id="hLogo"><img src="icon-96.png" alt=""></div>
+    <div class="hd"><b id="hName">Restoran</b><small>Sahib paneli</small></div>
+    <button class="pill" id="hOpen" data-act="toggleOpen">…</button>
+    <button class="ibtn" data-act="lock" title="Kilidlə">🔒</button>
+  </header>
+
+  <main>
+    <!-- PANEL -->
+    <div class="view active" id="v-panel">
+      <div class="chips" id="pChips">
+        <button class="chip active" data-act="pPeriod" data-v="day">Bu gün</button>
+        <button class="chip" data-act="pPeriod" data-v="week">Bu həftə</button>
+        <button class="chip" data-act="pPeriod" data-v="month">Bu ay</button>
+        <button class="chip" data-act="pPeriod" data-v="year">Bu il</button>
+      </div>
+      <div class="kpis" id="pKpi"></div>
+      <div class="card"><h3>📈 Son 7 gün (tamamlanan satış, AZN)</h3><div id="pChart"></div></div>
+      <div class="card"><h3>🔥 Ən çox satılanlar</h3><div id="pTop"></div></div>
+    </div>
+
+    <!-- SİFARİŞLƏR -->
+    <div class="view" id="v-orders">
+      <div class="segs" id="oTabs">
+        <button class="seg active" data-act="oTab" data-v="active">Aktiv</button>
+        <button class="seg" data-act="oTab" data-v="done">Tamamlanmış</button>
+        <button class="seg" data-act="oTab" data-v="rej">İmtina</button>
+      </div>
+      <div class="chips" id="oChips">
+        <button class="chip active" data-act="oPeriod" data-v="day">Bu gün</button>
+        <button class="chip" data-act="oPeriod" data-v="week">Bu həftə</button>
+        <button class="chip" data-act="oPeriod" data-v="month">Bu ay</button>
+        <button class="chip" data-act="oPeriod" data-v="year">Bu il</button>
+        <button class="chip" data-act="oPeriod" data-v="all">Hamısı</button>
+      </div>
+      <input id="oSearch" placeholder="🔍 Sifariş ID ilə axtar" style="margin-bottom:10px">
+      <div id="oSum" class="meta" style="color:var(--mut);font-size:12.5px;margin-bottom:8px"></div>
+      <div id="oList"></div>
+    </div>
+
+    <!-- MENYU -->
+    <div class="view" id="v-menu">
+      <div class="menu-actions">
+        <button class="btn" data-act="addProd">➕ Məhsul əlavə et</button>
+        <button class="btn sec" data-act="bulkOpen">📥 Toplu yüklə</button>
+      </div>
+      <div class="chips" id="mChips"></div>
+      <input id="mSearch" placeholder="🔍 Məhsul axtar" style="margin-bottom:10px">
+      <div id="mSum" style="color:var(--mut);font-size:12.5px;margin-bottom:8px"></div>
+      <div id="mList"></div>
+    </div>
+
+    <!-- MALİYYƏ -->
+    <div class="view" id="v-fin">
+      <div class="bal"><small>💎 MÖVCUD BALANS</small><h2 id="fBal">0.00 AZN</h2><div style="color:var(--mut);font-size:12px;margin-top:4px" id="fComm"></div></div>
+      <div class="kpis" id="fKpi"></div>
+      <div class="card">
+        <h3>💸 Pul çıxarma sorğusu</h3>
+        <input id="wAmount" type="number" inputmode="decimal" placeholder="Məbləğ (AZN)">
+        <input id="wCard" placeholder="Kart nömrəsi / IBAN" style="margin-top:10px">
+        <button class="btn" data-act="wSubmit">✨ Sorğu göndər</button>
+        <div style="color:var(--mut);font-size:11.5px;margin-top:8px">Minimum 5 AZN. Göndərmək üçün hesab şifrəsi tələb olunur.</div>
+      </div>
+      <div class="card"><h3>🧾 Sorğu tarixçəsi</h3><div id="fHist"></div></div>
+    </div>
+
+    <!-- PROFİL -->
+    <div class="view" id="v-prof">
+      <div class="card" style="text-align:center">
+        <div class="big-av" id="pfAv">🍽️</div>
+        <b style="font-size:17px" id="pfName"></b>
+      </div>
+      <div class="card" id="pfInfo"></div>
+      <div class="card"><h3>👷 İşçi paneli</h3><div id="pfStaff"></div></div>
+      <input type="file" id="logoFile" accept="image/*" class="hide">
+      <button class="btn sec" data-act="logoPick">📷 Restoran şəklini / loqosunu dəyiş</button>
+      <button class="btn sec" data-act="changePin">🔐 Sahib PIN-ini dəyiş</button>
+      <button class="btn sec" data-act="lock">🔒 Paneli kilidlə</button>
+      <button class="btn red" data-act="logout">🚪 Çıxış et</button>
+    </div>
+  </main>
+
+  <nav>
+    <button class="active" data-act="nav" data-v="panel"><span>📊</span><span>Panel</span></button>
+    <button data-act="nav" data-v="orders"><span>🧾</span><span>Sifarişlər</span><b class="badge hide" id="nBadge">0</b></button>
+    <button data-act="nav" data-v="menu"><span>🍽️</span><span>Menyu</span></button>
+    <button data-act="nav" data-v="fin"><span>💰</span><span>Maliyyə</span></button>
+    <button data-act="nav" data-v="prof"><span>👤</span><span>Profil</span></button>
+  </nav>
+</div>
+
+<div id="modalBack"><div id="modalBox"></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, EmailAuthProvider, reauthenticateWithCredential, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, doc, onSnapshot, getDoc, updateDoc, deleteDoc, writeBatch, query, where } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+window.__sahibReady = true;
+const firebaseConfig = {
+  apiKey: "AIzaSyBQIDfObXpxNa1hVAYDmigSi9u49y_BJQc",
+  authDomain: "bkaugo.firebaseapp.com",
+  projectId: "bkaugo",
+  storageBucket: "bkaugo.firebasestorage.app",
+  messagingSenderId: "568740538737",
+  appId: "1:568740538737:web:9b2ab40d0b728789a1aed0",
+  measurementId: "G-44T95W0PSX"
+};
+const app = initializeApp(firebaseConfig, "bakugo-sahib");
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+/* ===================== KÖMƏKÇİLƏR ===================== */
+const $ = id => document.getElementById(id);
+const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = n => (Number(n) || 0).toFixed(2) + " AZN";
+const MIN_WITHDRAW = 5;
+const PERIOD_LABEL = { day:"Bu gün", week:"Bu həftə", month:"Bu ay", year:"Bu il", all:"Hamısı" };
+const FINAL = ["delivered","cancelled"];
+
+function loading(on){ $("loader").classList.toggle("show", !!on); }
+let toastT;
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toastT); toastT = setTimeout(()=> t.style.display = "none", 3200); }
+function thumb(url, w){ if(!url) return ""; return url.includes("res.cloudinary.com") ? url.replace("/upload/", `/upload/w_${w},q_70,f_auto,c_limit/`) : url; }
+
+/* Saf JS SHA-256 (PIN hash-i üçün; bütün mühitlərdə eyni nəticə verir) */
+function sha256(msg){
+  const m = new TextEncoder().encode(msg), l = m.length;
+  const pr = []; for(let n = 2; pr.length < 64; n++){ if(pr.every(p => n % p)) pr.push(n); }
+  const fr = x => Math.floor((x - Math.floor(x)) * 4294967296) >>> 0;
+  const K = pr.map(p => fr(Math.cbrt(p)));
+  let H = pr.slice(0,8).map(p => fr(Math.sqrt(p)));
+  const total = ((l + 9 + 63) >> 6) << 6;
+  const buf = new Uint8Array(total); buf.set(m); buf[l] = 0x80;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(total - 4, (l * 8) >>> 0); dv.setUint32(total - 8, Math.floor(l * 8 / 4294967296));
+  const w = new Uint32Array(64), rr = (x,n) => (x >>> n) | (x << (32 - n));
+  for(let o = 0; o < total; o += 64){
+    for(let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+    for(let i = 16; i < 64; i++){
+      const s0 = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3), s1 = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a,b,c,d,e,f,g,h] = H;
+    for(let i = 0; i < 64; i++){
+      const S1 = rr(e,6) ^ rr(e,11) ^ rr(e,25), ch = (e & f) ^ (~e & g), t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+      const S0 = rr(a,2) ^ rr(a,13) ^ rr(a,22), mj = (a & b) ^ (a & c) ^ (b & c), t2 = (S0 + mj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H = [H[0]+a,H[1]+b,H[2]+c,H[3]+d,H[4]+e,H[5]+f,H[6]+g,H[7]+h].map(x => x >>> 0);
+  }
+  return H.map(x => x.toString(16).padStart(8,"0")).join("");
+}
+const pinHash = (uid, pin) => sha256(uid + ":" + pin + ":bakugo-owner");
+
+/* ===================== VƏZİYYƏT ===================== */
+const S = {
+  uid:null, R:null, orders:[], products:[], wd:[], cats:[], mCat:"all",
+  loaded:{orders:false, products:false, wd:false},
+  view:"panel", pPeriod:"day", oPeriod:"day", oTab:"active", oLimit:60, open:new Set(),
+  unsubs:[], entered:false
+};
+
+/* ===================== ZAMAN / MƏBLƏĞ ===================== */
+function createdMs(o){
+  const c = o.createdAt; if(!c) return 0;
+  if(typeof c.toMillis === "function") return c.toMillis();
+  if(typeof c.toDate === "function") return c.toDate().getTime();
+  if(typeof c.seconds === "number") return c.seconds * 1000;
+  if(c instanceof Date) return c.getTime();
+  return Number(c) || 0;
+}
+function evMs(o){
+  if(o.status === "delivered" && o.deliveredAt) return Number(o.deliveredAt) || createdMs(o);
+  if(o.status === "cancelled" && o.cancelledAt) return Number(o.cancelledAt) || createdMs(o);
+  return createdMs(o);
+}
+const amt = o => parseFloat(o.totalAmount || o.price || 0) || (Array.isArray(o.items) ? o.items.reduce((t, i) => t + (parseFloat(i.price) || 0) * (parseFloat(i.qty || i.quantity || 1) || 1), 0) : 0);
+const comm = () => parseFloat(S.R && S.R.commission || 0) || 0;
+const netOf = x => x * (1 - comm() / 100);
+function fmtTime(ms){
+  if(!ms) return "Tarix məlum deyil";
+  const d = new Date(ms);
+  return d.toLocaleDateString("az-AZ",{day:"2-digit",month:"2-digit",year:"numeric"}) + " · " + d.toLocaleTimeString("az-AZ",{hour:"2-digit",minute:"2-digit"});
+}
+/* Dövr aralığı [başlanğıc, son). offset=-1 əvvəlki həftə/ay/il/gün */
+function range(p, off = 0){
+  const n = new Date(); let a, b;
+  if(p === "all") return [0, Infinity];
+  if(p === "day"){ a = new Date(n.getFullYear(), n.getMonth(), n.getDate() + off); b = new Date(a); b.setDate(b.getDate() + 1); }
+  if(p === "week"){ a = new Date(n.getFullYear(), n.getMonth(), n.getDate()); a.setDate(a.getDate() - ((a.getDay() + 6) % 7) + off * 7); b = new Date(a); b.setDate(b.getDate() + 7); }
+  if(p === "month"){ a = new Date(n.getFullYear(), n.getMonth() + off, 1); b = new Date(n.getFullYear(), n.getMonth() + off + 1, 1); }
+  if(p === "year"){ a = new Date(n.getFullYear() + off, 0, 1); b = new Date(n.getFullYear() + off + 1, 0, 1); }
+  return [a.getTime(), b.getTime()];
+}
+function agg(p, off = 0){
+  const [a, b] = range(p, off), d = {n:0, sum:0}, r = {n:0, sum:0};
+  for(const o of S.orders){
+    if(!FINAL.includes(o.status)) continue;
+    const t = evMs(o); if(t < a || t >= b) continue;
+    const x = o.status === "delivered" ? d : r; x.n++; x.sum += amt(o);
+  }
+  return {d, r};
+}
+function delta(cur, prev){
+  if(!prev) return cur ? '<span class="up">▲ yeni</span>' : "—";
+  const pc = (cur - prev) / prev * 100;
+  return `<span class="${pc >= 0 ? "up" : "dn"}">${pc >= 0 ? "▲" : "▼"} ${Math.abs(pc).toFixed(0)}%</span>`;
+}
+function itemsText(o){
+  if(!Array.isArray(o.items) || !o.items.length) return "";
+  return o.items.map(i => esc(i.name || "Məhsul") + " ×" + (parseFloat(i.qty || i.quantity || 1) || 1)).join(", ");
+}
+function prepLeft(o){
+  const pm = parseInt(o.prepMinutes, 10), at = Number(o.restaurantAcceptedAt) || 0;
+  if(!pm || !at) return null;
+  return Math.round((at + pm * 60000 - Date.now()) / 60000);
+}
+function activeStatus(o){
+  if(o.status === "preparing"){
+    if(o.restaurantAccepted !== true){ const w = Math.max(0, Math.round((Date.now() - createdMs(o)) / 60000)); return "🆕 Yeni — işçi qəbul etməyib" + (w >= 2 ? ` (${w} dəq)` : ""); }
+    const l = prepLeft(o);
+    if(l === null) return "🍔 Hazırlanır";
+    return l >= 0 ? `🍔 Hazırlanır · ${l} dəq qalıb` : `⚠️ Gecikir · ${-l} dəq`;
+  }
+  return ({searching_courier:"🔍 Kuryer axtarılır", courier_not_found:"⚠️ Kuryer tapılmadı", courier_accepted:"🛵 Kuryer qəbul etdi", collected:"🛍️ Kuryerdə"})[o.status] || esc(o.status || "—");
+}
+
+/* ===================== RENDER ===================== */
+function renderHeader(){
+  const R = S.R || {};
+  $("hName").textContent = R.name || "Restoran";
+  const lg = $("hLogo");
+  lg.innerHTML = `<img src="${R.photoURL ? esc(thumb(R.photoURL, 90)) : "icon-96.png"}" alt="">`;
+  const p = $("hOpen"); const on = R.active !== false;
+  p.textContent = on ? "🟢 Açıq" : "🔴 Bağlı"; p.className = "pill " + (on ? "on" : "off");
+  const newCnt = S.orders.filter(o => o.status === "preparing" && o.restaurantAccepted !== true).length;
+  const bd = $("nBadge"); bd.textContent = newCnt; bd.classList.toggle("hide", !newCnt);
+}
+
+function renderPanel(){
+  const p = S.pPeriod, cur = agg(p), prev = agg(p, -1);
+  const activeCnt = S.orders.filter(o => !FINAL.includes(o.status)).length;
+  const avg = cur.d.n ? cur.d.sum / cur.d.n : 0;
+  const sp = (() => {
+    const [a, b] = range(p); let n = 0, accS = 0, pn = 0, pS = 0;
+    for(const o of S.orders){
+      const t = createdMs(o); if(t < a || t >= b) continue;
+      const at = Number(o.restaurantAcceptedAt) || 0;
+      if(at && t && at > t){ n++; accS += (at - t) / 1000; }
+      const pm = parseInt(o.prepMinutes, 10); if(pm){ pn++; pS += pm; }
+    }
+    const f = sec => sec < 60 ? Math.round(sec) + " san" : (sec / 60).toFixed(1) + " dəq";
+    return { acc: n ? f(accS / n) : "—", prep: pn ? Math.round(pS / pn) + " dəq" : "—" };
+  })();
+  $("pKpi").innerHTML = `
+    <div class="kpi wide"><small>${PERIOD_LABEL[p]} · satış (tamamlanan)</small><b class="title-grad">${money(cur.d.sum)}</b><i>Xalis qazanc: <b style="display:inline;font-size:13px;color:var(--gold)">${money(netOf(cur.d.sum))}</b> · əvvəlki dövrə görə ${delta(cur.d.sum, prev.d.sum)}</i></div>
+    <div class="kpi"><small>✅ Tamamlanan sifariş</small><b>${cur.d.n}</b><i>${delta(cur.d.n, prev.d.n)}</i></div>
+    <div class="kpi"><small>❌ İmtina edilən</small><b>${cur.r.n}</b><i>${money(cur.r.sum)}</i></div>
+    <div class="kpi"><small>🧮 Orta çek</small><b>${money(avg)}</b><i>sifariş başına</i></div>
+    <div class="kpi"><small>⏳ İndi aktiv</small><b>${activeCnt}</b><i>canlı sifarişlər</i></div>
+    <div class="kpi"><small>⚡ İşçi qəbul sürəti</small><b>${sp.acc}</b><i>sifariş gələndən qəbula qədər</i></div>
+    <div class="kpi"><small>⏱️ Orta hazırlıq vaxtı</small><b>${sp.prep}</b><i>işçinin seçdiyi</i></div>`;
+
+  // Son 7 gün
+  const days = [], names = ["Baz","B.e","Ç.a","Çər","C.a","Cüm","Şən"];
+  for(let i = 6; i >= 0; i--){
+    const [a, b] = range("day", -i); let s = 0;
+    for(const o of S.orders){ if(o.status !== "delivered") continue; const t = evMs(o); if(t >= a && t < b) s += amt(o); }
+    days.push({s, lab: names[new Date(a).getDay()] + "<br>" + new Date(a).getDate()});
+  }
+  const mx = Math.max(...days.map(d => d.s), 1);
+  $("pChart").innerHTML = '<div class="bars">' + days.map(d =>
+    `<div class="bar"><span class="bv">${d.s >= 100 ? d.s.toFixed(0) : d.s.toFixed(1)}</span><div class="bf" style="height:${Math.max(2, d.s / mx * 100 * .72)}%"></div><span class="bl">${d.lab}</span></div>`).join("") + "</div>";
+
+  // Ən çox satılanlar (seçilmiş dövr, tamamlanan sifarişlər)
+  const [a, b] = range(p), map = {};
+  for(const o of S.orders){
+    if(o.status !== "delivered") continue; const t = evMs(o); if(t < a || t >= b) continue;
+    (Array.isArray(o.items) ? o.items : []).forEach(i => {
+      const k = i.name || "Məhsul", q = parseFloat(i.qty || i.quantity || 1) || 1, pr = parseFloat(i.price) || 0;
+      (map[k] = map[k] || {q:0, s:0}); map[k].q += q; map[k].s += q * pr;
+    });
+  }
+  const top = Object.entries(map).sort((x, y) => y[1].q - x[1].q).slice(0, 5);
+  $("pTop").innerHTML = top.length ? top.map(([n, v], i) =>
+    `<div class="row"><div class="rk">${i + 1}</div><div class="rn">${esc(n)}</div><div class="rv">${v.q} ədəd<small>${money(v.s)}</small></div></div>`).join("")
+    : '<div class="empty">Bu dövrdə satış yoxdur</div>';
+  document.querySelectorAll("#pChips .chip").forEach(c => c.classList.toggle("active", c.dataset.v === p));
+}
+
+function renderOrders(){
+  document.querySelectorAll("#oChips .chip").forEach(c => c.classList.toggle("active", c.dataset.v === S.oPeriod));
+  document.querySelectorAll("#oTabs .seg").forEach(c => c.classList.toggle("active", c.dataset.v === S.oTab));
+  $("oChips").classList.toggle("hide", S.oTab === "active");
+  const [a, b] = range(S.oPeriod), q = ($("oSearch").value || "").trim().toLowerCase();
+  let arr = S.orders.filter(o => {
+    if(S.oTab === "active") return !FINAL.includes(o.status);
+    if(o.status !== (S.oTab === "done" ? "delivered" : "cancelled")) return false;
+    const t = evMs(o); return t >= a && t < b;
+  });
+  if(q) arr = arr.filter(o => o.id.toLowerCase().includes(q));
+  arr.sort((x, y) => evMs(y) - evMs(x));
+  const sum = arr.reduce((s, o) => s + amt(o), 0);
+  $("oSum").innerHTML = `<b style="color:#fff">${arr.length}</b> sifariş · cəmi <b style="color:#fff">${money(sum)}</b>`;
+  if(!S.loaded.orders){ $("oList").innerHTML = '<div class="empty">Yüklənir…</div>'; return; }
+  if(!arr.length){ $("oList").innerHTML = '<div class="empty">' + (S.oTab === "active" ? "Aktiv sifariş yoxdur" : S.oTab === "done" ? "Bu dövrdə tamamlanmış sifariş yoxdur" : "Bu dövrdə imtina edilmiş sifariş yoxdur") + "</div>"; return; }
+  $("oList").innerHTML = arr.slice(0, S.oLimit).map(o => {
+    const cls = S.oTab === "rej" ? "rej" : S.oTab === "active" ? "act" : "";
+    const late = S.oTab === "active" && o.status === "preparing" && o.restaurantAccepted === true && (prepLeft(o) ?? 0) < 0;
+    const tag = S.oTab === "active" ? `<span class="tag${late ? " bad" : ""}">${activeStatus(o)}</span>` : S.oTab === "done" ? '<span class="tag ok">✅ Çatdırıldı</span>' : '<span class="tag bad">❌ İmtina</span>';
+    let det = "";
+    if(Array.isArray(o.items)) det += o.items.map(i => { const pr = parseFloat(i.price) || 0, qn = parseFloat(i.qty || i.quantity || 1) || 1; return `<div><span>${esc(i.name || "Məhsul")} ×${qn}</span><span>${(pr * qn).toFixed(2)} AZN</span></div>`; }).join("");
+    if(o.couponCode) det += `<div><span>🎁 Kupon: ${esc(o.couponCode)}</span><span>${o.couponDiscountAmount ? "−" + (parseFloat(o.couponDiscountAmount) || 0).toFixed(2) + " AZN" : ""}</span></div>`;
+    det += `<div><span><b>Toplam</b></span><span><b>${money(amt(o))}</b></span></div>`;
+    if(S.oTab === "done") det += `<div><span>Xalis (komissiyadan sonra)</span><span>${money(netOf(amt(o)))}</span></div>`;
+    if(S.oTab === "rej") det += `<div><span>Səbəb</span><span style="text-align:right">${esc(o.cancelReason || "Göstərilməyib")}</span></div>`;
+    if(o.restaurantAcceptedAt) det += `<div><span>👷 İşçi qəbul etdi</span><span>${fmtTime(Number(o.restaurantAcceptedAt))}${o.prepMinutes ? " · " + esc(o.prepMinutes) + " dəq" : ""}</span></div>`;
+    if(o.orderNote) det += `<div><span>📝 Müştəri qeydi</span><span style="text-align:right">${esc(o.orderNote)}</span></div>`;
+    det += `<div><span style="color:var(--mut)">Tam ID</span><span style="color:var(--mut);font-size:11px">${esc(o.id)}</span></div>`;
+    return `<div class="ord ${cls}${S.open.has(o.id) ? " open" : ""}" data-act="ordOpen" data-id="${esc(o.id)}">
+      <div class="top"><span class="oid">#${esc(o.id.substring(0, 6))}</span><span class="amt">${money(amt(o))}</span></div>
+      <div class="meta">🕒 ${fmtTime(evMs(o))} &nbsp; ${tag}</div>
+      <div class="prods">${itemsText(o) || '<span style="color:var(--mut)">Məhsul məlumatı yoxdur</span>'}</div>
+      <div class="det">${det}</div></div>`;
+  }).join("") + (arr.length > S.oLimit ? `<button class="btn sec" data-act="more">Daha çox göstər (${arr.length - S.oLimit})</button>` : "");
+}
+
+function renderMenu(){
+  const q = ($("mSearch").value || "").trim().toLowerCase();
+  const all = S.products;
+  const cats = [...new Set(all.map(p => p.category || "Restoranlar"))];
+  if(S.mCat !== "all" && !cats.includes(S.mCat)) S.mCat = "all";
+  $("mChips").innerHTML = cats.length > 1 ? ['<button class="chip' + (S.mCat === "all" ? " active" : "") + '" data-act="mCat" data-v="all">Hamısı</button>']
+    .concat(cats.map(c => `<button class="chip${S.mCat === c ? " active" : ""}" data-act="mCat" data-v="${esc(c)}">${esc(c)}</button>`)).join("") : "";
+  const arr = all.filter(p => (S.mCat === "all" || (p.category || "Restoranlar") === S.mCat) && (!q || String(p.name || "").toLowerCase().includes(q) || String(p.category || "").toLowerCase().includes(q)));
+  const disc = all.filter(p => p.isDiscountActive).length, stop = all.filter(p => p.available === false).length;
+  $("mSum").innerHTML = `<b style="color:#fff">${all.length}</b> məhsul · <b style="color:#fff">${disc}</b> endirimli` + (stop ? ` · <b style="color:var(--bad)">${stop}</b> stopda` : "");
+  if(!S.loaded.products){ $("mList").innerHTML = '<div class="empty">Yüklənir…</div>'; return; }
+  if(!all.length){ $("mList").innerHTML = '<div class="empty">Menyu boşdur.<br>«➕ Məhsul əlavə et» və ya «📥 Toplu yüklə» ilə başlayın.</div>'; return; }
+  if(!arr.length){ $("mList").innerHTML = '<div class="empty">Məhsul tapılmadı</div>'; return; }
+  $("mList").innerHTML = arr.map(p => `<div class="prod${p.available === false ? " stopped" : ""}">
+    <img src="${esc(thumb(p.img, 120))}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+    <div class="pi"><b>${esc(p.name)}</b><small>${esc(p.category || "")}${p.unit && p.unit !== "ədəd" ? " · " + esc(p.unit) : ""}</small><br>
+    ${p.isDiscountActive ? `<span class="old">${esc(p.price)} AZN</span><b style="display:inline;color:var(--or)">${esc(p.discountedPrice ? String(p.discountedPrice).replace(" AZN","") : ((parseFloat(p.price) || 0) * (1 - (parseFloat(p.discountPercent) || 0) / 100)).toFixed(2))} AZN</b> <small>(-${esc(p.discountPercent)}%)</small>` : `<b style="display:inline;color:var(--gold)">${esc(p.price)} AZN</b>`}</div>
+    <div class="pe-row"><button class="pe" data-act="editProd" data-id="${esc(p.id)}">✏️ Dəyiş</button>
+    <button class="pe ${p.available === false ? "st-off" : "st-on"}" data-act="avail" data-id="${esc(p.id)}">${p.available === false ? "⛔ Stopda" : "✅ Satışda"}</button></div></div>`).join("");
+}
+
+function balanceInfo(){
+  let delivered = 0; S.orders.forEach(o => { if(o.status === "delivered") delivered += amt(o); });
+  let blocked = 0, approved = 0, pending = 0;
+  S.wd.forEach(w => {
+    const a = parseFloat(w.amount) || 0;
+    if(w.status !== "rejected" && w.status !== "cancelled") blocked += a;
+    if(w.status === "approved") approved += a;
+    if(w.status === "pending") pending += a;
+  });
+  const net = netOf(delivered);
+  return { net, balance: Math.max(0, net - blocked), approved, pending };
+}
+
+function renderFin(){
+  const B = balanceInfo();
+  $("fBal").textContent = money(B.balance);
+  $("fComm").textContent = "Komissiya: " + comm() + "%";
+  $("fKpi").innerHTML = `
+    <div class="kpi"><small>📥 Ümumi xalis qazanc</small><b style="font-size:17px">${money(B.net)}</b></div>
+    <div class="kpi"><small>✅ Ödənilmiş</small><b style="font-size:17px">${money(B.approved)}</b></div>
+    <div class="kpi wide" style="background:var(--card);border-color:var(--line)"><small>⏳ Gözləyən sorğular</small><b style="font-size:17px">${money(B.pending)}</b></div>`;
+  if(!S.loaded.wd){ $("fHist").innerHTML = '<div class="empty">Yüklənir…</div>'; return; }
+  const items = [...S.wd].sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+  const lab = {pending:"⏳ Gözləyir", approved:"✅ Təsdiqləndi", rejected:"❌ Rədd edildi", cancelled:"🚫 Ləğv edildi"};
+  $("fHist").innerHTML = items.length ? items.map(w => `<div class="hi"><div><b style="color:var(--gold)">${money(w.amount)}</b><br><small>${esc(w.card || "")}</small><br><small>${fmtTime(Number(w.createdAt) || 0)}</small></div>
+    <div style="text-align:right"><small class="ws-${esc(w.status)}">${lab[w.status] || esc(w.status)}</small>${w.status === "pending" ? `<br><button class="cbtn" data-act="wCancel" data-id="${esc(w.id)}">Ləğv et</button>` : ""}</div></div>`).join("")
+    : '<div class="empty">Sorğu tarixçəsi yoxdur</div>';
+}
+
+function renderProfile(){
+  const R = S.R || {};
+  $("pfName").textContent = R.name || "Restoran";
+  $("pfAv").innerHTML = R.photoURL ? `<img src="${esc(thumb(R.photoURL, 200))}" alt="">` : "🍽️";
+  const rows = [["📞 Nömrə", R.phone], ["📍 Ünvan", R.restaurantAddress], ["✉️ Gmail", R.email || (auth.currentUser && auth.currentUser.email)],
+    ["💼 Komissiya", comm() + "%"], ["📅 Qeydiyyat", R.createdAt ? fmtTime(Number(R.createdAt)) : "—"], ["🟢 Status", R.active !== false ? "Açıq (sifariş qəbul edir)" : "Bağlı"]];
+  const on = k => R[k] !== false;
+  const sw = (k, t, d) => `<div class="sw-row" data-act="staffSw" data-k="${k}"><div>${t}<small>${d}</small></div><span class="tg${on(k) ? " on" : ""}"></span></div>`;
+  $("pfStaff").innerHTML = `
+    <div class="sw-row" data-act="setPrep"><div>⏱️ Standart hazırlıq vaxtı<small>Yeni sifarişdə işçiyə ilk seçilmiş vaxt</small></div><b style="color:var(--gold)">${parseInt(R.defaultPrep, 10) || 15} dəq ›</b></div>
+    ${sw("staffCanToggle", "🟢 İşçi restoranı açıb-bağlaya bilsin", "Söndürsəniz yalnız siz açıb-bağlayırsınız")}
+    ${sw("staffCanPrep", "⏱️ İşçi standart vaxtı dəyişə bilsin", "Söndürsəniz yalnız siz dəyişirsiniz")}
+    ${sw("staffCanAuto", "⚡ İşçi avtomatik qəbulu aça bilsin", "Söndürsəniz bütün sifarişləri işçi əllə qəbul edir")}
+    <div class="sw-row" data-act="staffNote"><div>📌 İşçilərə qeyd<small>${R.staffNote ? esc(R.staffNote) : "İşçi panelinin yuxarısında görünür (məs. «Bu gün lavaş bitib»)"}</small></div><b style="color:var(--gold)">›</b></div>
+    <a class="btn sec" href="./" style="text-align:center;text-decoration:none">📦 İşçi panelini aç</a>`;
+  $("pfInfo").innerHTML = rows.map(r => `<div class="pf"><span>${r[0]}</span><b>${esc(r[1] || "—")}</b></div>`).join("");
+}
+
+function render(){
+  if(!S.entered) return;
+  renderHeader();
+  if(S.view === "panel") renderPanel();
+  if(S.view === "orders") renderOrders();
+  if(S.view === "menu") renderMenu();
+  if(S.view === "fin") renderFin();
+  if(S.view === "prof") renderProfile();
+}
+
+/* ===================== MODAL ===================== */
+function modal(html){ $("modalBox").innerHTML = html; $("modalBack").classList.add("show"); }
+function closeModal(){ $("modalBack").classList.remove("show"); $("modalBox").classList.remove("wide"); $("modalBox").innerHTML = ""; S.lockModal = false; }
+$("modalBack").addEventListener("click", e => { if(e.target.id === "modalBack" && !S.lockModal) closeModal(); });
+function askPassword(title){
+  return new Promise(res => {
+    S.lockModal = true;
+    modal(`<h3 class="title-grad">${esc(title)}</h3><input id="mPw" type="password" placeholder="Hesab şifrəsi" autocomplete="current-password"><button class="btn" id="mOk">Təsdiqlə</button><button class="btn sec" id="mNo">Ləğv et</button>`);
+    const done = v => { S.lockModal = false; closeModal(); res(v); };
+    $("mOk").onclick = () => done($("mPw").value || null);
+    $("mNo").onclick = () => done(null);
+    $("mPw").addEventListener("keydown", e => { if(e.key === "Enter") done($("mPw").value || null); });
+    setTimeout(() => $("mPw") && $("mPw").focus(), 80);
+  });
+}
+async function reauth(title){
+  const pw = await askPassword(title); if(!pw) return false;
+  try{ loading(true); await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(auth.currentUser.email, pw)); return true; }
+  catch(e){ toast("Şifrə yanlışdır"); return false; }
+  finally{ loading(false); }
+}
+
+/* ===================== MƏLUMAT DİNLƏYİCİLƏRİ ===================== */
+function listen(){
+  stopListen();
+  const u = S.uid;
+  const err = e => { console.error(e); toast("Məlumat oxuna bilmədi: " + (e.code || e.message)); };
+  S.unsubs.push(onSnapshot(doc(db, "restaurants", u), s => { if(s.exists()){ S.R = s.data(); render(); } }, err));
+  S.unsubs.push(onSnapshot(query(collection(db, "orders"), where("restaurantId", "==", u)), s => {
+    S.orders = s.docs.map(d => ({id:d.id, ...d.data()})); S.loaded.orders = true; render();
+  }, err));
+  S.unsubs.push(onSnapshot(query(collection(db, "products"), where("ownerId", "==", u)), s => {
+    S.products = s.docs.map(d => ({id:d.id, ...d.data()})).sort((x, y) => String(x.name || "").localeCompare(String(y.name || ""), "az")); S.loaded.products = true; render();
+  }, err));
+  S.unsubs.push(onSnapshot(collection(db, "categories"), s => { S.cats = s.docs.map(d => d.data()); }, e => console.warn("Kataloq oxunmadı:", e && e.message)));
+  S.unsubs.push(onSnapshot(query(collection(db, "withdrawals"), where("restaurantId", "==", u)), s => {
+    S.wd = s.docs.map(d => ({id:d.id, ...d.data()})); S.loaded.wd = true; render();
+  }, err));
+}
+function stopListen(){ S.unsubs.forEach(f => { try{ f(); }catch(e){} }); S.unsubs = []; S.loaded = {orders:false, products:false, wd:false}; }
+
+/* ===================== GİRİŞ / PIN AXINI ===================== */
+function show(id){ ["authScreen","pinScreen","appRoot"].forEach(x => $(x).classList.toggle("hide", x !== id)); }
+function authMsg(e){
+  const c = (e && e.code) || "";
+  if(/invalid-credential|wrong-password|user-not-found|invalid-email/.test(c)) return "Gmail və ya şifrə yanlışdır";
+  if(c.includes("too-many-requests")) return "Çox cəhd edildi, bir az sonra yenidən yoxlayın";
+  if(c.includes("network")) return "İnternet bağlantısını yoxlayın";
+  return (e && e.message) || "Xəta baş verdi";
+}
+let pinMode = "enter", pinFails = 0, pinLockUntil = 0;
+
+async function afterLogin(user){
+  try{
+    loading(true);
+    const snap = await getDoc(doc(db, "restaurants", user.uid));
+    if(!snap.exists()){ $("lErr").textContent = "Bu hesab restoran hesabı deyil."; await signOut(auth); show("authScreen"); return; }
+    S.uid = user.uid; S.R = snap.data();
+    if(sessionStorage.getItem("sahibUnlocked") === user.uid){ enter(); return; }
+    openPin(S.R.ownerPinHash ? "enter" : "create");
+  }catch(e){
+    console.error(e); $("lErr").textContent = "Məlumat oxunmadı: " + (e.code || e.message); show("authScreen");
+  }finally{ loading(false); }
+}
+function openPin(mode){
+  pinMode = mode; show("pinScreen");
+  $("pin1").value = ""; $("pin2").value = ""; $("pinErr").textContent = "";
+  $("pin2").classList.toggle("hide", mode !== "create");
+  $("pinTitle").textContent = mode === "create" ? "🔐 PIN təyin edin" : "🔐 Sahib PIN-i";
+  $("pinSub").textContent = mode === "create"
+    ? "Bu paneli yalnız siz aça biləsiniz deyə 4–8 rəqəmli PIN seçin. İşçilər bu PIN-i bilməməlidir."
+    : "Davam etmək üçün sahib PIN-ini daxil edin.";
+  $("pinBtn").textContent = mode === "create" ? "PIN-i yadda saxla" : "Aç";
+  setTimeout(() => $("pin1").focus(), 100);
+}
+function enter(){
+  sessionStorage.setItem("sahibUnlocked", S.uid);
+  S.entered = true; show("appRoot"); listen(); render();
+}
+async function pinOk(){
+  const p1 = $("pin1").value.trim(), err = $("pinErr");
+  if(!/^\d{4,8}$/.test(p1)){ err.textContent = "PIN 4–8 rəqəm olmalıdır"; return; }
+  if(pinMode === "create"){
+    if(p1 !== $("pin2").value.trim()){ err.textContent = "PIN-lər eyni deyil"; return; }
+    try{
+      loading(true);
+      await updateDoc(doc(db, "restaurants", S.uid), { ownerPinHash: pinHash(S.uid, p1) });
+      S.R.ownerPinHash = pinHash(S.uid, p1); toast("PIN təyin olundu"); enter();
+    }catch(e){
+      console.error(e); err.textContent = "PIN yadda saxlanmadı: " + (e.code || e.message);
+    }finally{ loading(false); }
+    return;
+  }
+  const now = Date.now();
+  if(now < pinLockUntil){ err.textContent = "Çox yanlış cəhd. " + Math.ceil((pinLockUntil - now) / 1000) + " san. gözləyin"; return; }
+  if(pinHash(S.uid, p1) === S.R.ownerPinHash){ pinFails = 0; enter(); return; }
+  pinFails++; $("pin1").value = "";
+  if(pinFails >= 5){ pinLockUntil = Date.now() + 30000; pinFails = 0; err.textContent = "5 yanlış cəhd. 30 saniyə gözləyin"; }
+  else err.textContent = "PIN yanlışdır (" + pinFails + "/5)";
+}
+
+async function doLogout(){
+  stopListen(); S.entered = false; S.uid = null; S.R = null; S.orders = []; S.products = []; S.wd = [];
+  sessionStorage.removeItem("sahibUnlocked"); closeModal();
+  try{ await signOut(auth); }catch(e){}
+  show("authScreen");
+}
+function doLock(){
+  sessionStorage.removeItem("sahibUnlocked"); stopListen(); S.entered = false; closeModal();
+  openPin(S.R && S.R.ownerPinHash ? "enter" : "create");
+}
+
+
+/* ===================== MENYU İDARƏETMƏSİ ===================== */
+const BUILTIN_CATS = [["Restoranlar","🍔"],["Market","🛒"],["İçkilər","🥤"],["Alkoqol","🍷"],["Tütün","🚬"],["Aptek","💊"],["Gül","💐"],["Hədiyyə","🎁"],["Zoo","🐶"],["Uşaq","👶"],["Baxım","💄"],["Geyim","👕"],["Digər","✨"]];
+function allCats(){
+  const out = BUILTIN_CATS.map(([name, icon]) => ({name, icon}));
+  (S.cats || []).forEach(c => { if(c && c.name && c.active !== false && !out.some(o => o.name === c.name)) out.push({name:c.name, icon:(c.icon && String(c.icon).length <= 4) ? c.icon : "✨"}); });
+  return out;
+}
+const catOptions = sel => allCats().map(c => `<option value="${esc(c.name)}"${c.name === sel ? " selected" : ""}>${esc(c.icon + " " + c.name)}</option>`).join("");
+
+/* Şəkil: brauzerdə kiçilt + Cloudinary (restoran tətbiqi ilə eyni hesab) */
+const CLOUDINARY_CLOUD_NAME = "d1yodkib", CLOUDINARY_UPLOAD_PRESET = "jtxsvniv";
+async function uploadImage(file, maxW = 1080){
+  const url = URL.createObjectURL(file);
+  try{
+    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("Şəkil oxunmadı")); im.src = url; });
+    const sc = Math.min(1, maxW / img.width), cv = document.createElement("canvas");
+    cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.8));
+    const fd = new FormData(); fd.append("file", blob); fd.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+    const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {method:"POST", body:fd});
+    if(!resp.ok) throw new Error("Şəkil yüklənmədi");
+    return (await resp.json()).secure_url;
+  } finally { URL.revokeObjectURL(url); }
+}
+function restFields(){
+  const R = S.R || {};
+  return { chain: R.chain || R.name || "", ownerId: S.uid, restaurantId: S.uid, restaurantName: R.name || "",
+    restaurantAddress: R.restaurantAddress || "", restaurantPhone: R.phone || "",
+    restaurantLat: R.restaurantLat ?? null, restaurantLng: R.restaurantLng ?? null };
+}
+
+/* ---- Tək məhsul: əlavə et / redaktə / sil ---- */
+function prodForm(p){
+  const edit = !!p;
+  S.lockModal = false;
+  modal(`<h3 class="title-grad">${edit ? "✏️ Məhsulu dəyiş" : "➕ Yeni məhsul"}</h3>
+    <label>Məhsulun adı</label><input id="fName" value="${edit ? esc(p.name) : ""}" maxlength="80">
+    <label>Qiymət (AZN)</label><input id="fPrice" type="number" inputmode="decimal" step="0.01" value="${edit ? esc(p.price) : ""}">
+    <label>Kateqoriya</label><select id="fCat">${catOptions(edit ? (p.category || "Restoranlar") : "Restoranlar")}</select>
+    <label>Ölçü vahidi</label><select id="fUnit">${["ədəd","kq","litr","qram"].map(u => `<option${edit && p.unit === u ? " selected" : ""}>${u}</option>`).join("")}</select>
+    <label>Endirim faizi % (boş = endirim yoxdur)</label><input id="fDisc" type="number" inputmode="decimal" value="${edit && p.isDiscountActive ? esc(p.discountPercent) : ""}">
+    <label>Şəkil (telefondan / kompüterdən)</label><input id="fFile" type="file" accept="image/*">
+    <img id="fPrev" class="prev ${edit && p.img ? "" : "hide"}" src="${edit ? esc(thumb(p.img, 400)) : ""}" alt="">
+    <button class="btn" id="fSave">${edit ? "Yadda saxla" : "Məhsulu əlavə et"}</button>
+    ${edit ? '<button class="btn red" id="fDel">🗑 Məhsulu sil</button>' : ""}
+    <button class="btn sec" id="fNo">Bağla</button>`);
+  $("fNo").onclick = closeModal;
+  $("fFile").onchange = e => { const f = e.target.files[0]; if(!f) return; const pv = $("fPrev"); pv.src = URL.createObjectURL(f); pv.classList.remove("hide"); };
+  if(edit) $("fDel").onclick = async () => {
+    if(!confirm("«" + p.name + "» menyudan silinsin?")) return;
+    try{ loading(true); await deleteDoc(doc(db, "products", p.id)); closeModal(); toast("Məhsul silindi"); }
+    catch(e){ toast("Xəta: " + (e.code || e.message)); } finally{ loading(false); }
+  };
+  $("fSave").onclick = async () => {
+    const name = $("fName").value.trim().replace(/\s+/g, " "), price = bulkParseNumber($("fPrice").value);
+    const dRaw = $("fDisc").value.trim(), dn = dRaw ? bulkParseNumber(dRaw) : 0, file = $("fFile").files[0];
+    if(!name){ toast("Məhsulun adını yazın"); return; }
+    if(isNaN(price) || price <= 0){ toast("Qiymət düzgün deyil"); return; }
+    if(dRaw && (isNaN(dn) || dn < 0 || dn > 95)){ toast("Endirim 1–95% arası olmalıdır"); return; }
+    if(file && file.size > 15 * 1024 * 1024){ toast("Şəkil 15MB-dan böyük ola bilməz"); return; }
+    const isD = dn > 0;
+    const data = { name, price, unit: $("fUnit").value, category: $("fCat").value,
+      isDiscountActive: isD, discountPercent: isD ? dn : 0, discountedPrice: isD ? (price - price * dn / 100).toFixed(2) : "" };
+    try{
+      loading(true);
+      if(file) data.img = await uploadImage(file);
+      if(edit) await updateDoc(doc(db, "products", p.id), data);
+      else await addDoc(collection(db, "products"), { ...data, ...restFields(), rating: 5.0, createdAt: Date.now(), img: data.img || BULK_DEFAULT_IMG });
+      closeModal(); toast(edit ? "Məhsul yeniləndi" : "Məhsul əlavə olundu");
+    }catch(e){ console.error(e); toast("Xəta: " + (e.code || e.message)); }
+    finally{ loading(false); }
+  };
+}
+
+/* ---- Toplu yükləmə (Excel / CSV / yapışdır + şəkillər) ---- */
+/*BULK_PURE_START*/
+const BULK_MAX_ROWS = 500;
+const BULK_DEFAULT_IMG = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600';
+function bulkFold(s) {
+  return String(s ?? '').toLowerCase()
+    .replace(/ə/g, 'e').replace(/ı/g, 'i').replace(/i̇/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u')
+    .replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
+    .replace(/[^a-z0-9]/g, '');
+}
+function bulkStripExt(n) { return String(n || '').replace(/\.(jpe?g|png|webp|gif|avif|heic)$/i, ''); }
+function bulkParseNumber(v) {
+  const t = String(v ?? '').trim().replace(/\s/g, '').replace(/[^\d.,-]/g, '');
+  if (!t) return NaN;
+  let x = t;
+  if (x.includes(',') && x.includes('.')) x = x.replace(/,/g, '');        // 1,234.50
+  else x = x.replace(',', '.');                                           // 12,50
+  return parseFloat(x);
+}
+function bulkDetectDelimiter(text) {
+  const first = text.split(/\r?\n/).find(l => l.trim()) || '';
+  if (first.includes('\t')) return '\t';
+  const sc = (first.match(/;/g) || []).length, cm = (first.match(/,/g) || []).length;
+  return sc >= cm && sc > 0 ? ';' : (cm > 0 ? ',' : '\t');
+}
+function bulkParseDelimited(text, delim) {
+  const rows = []; let row = [], cur = '', q = false;
+  text = text.replace(/^\uFEFF/, '');
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === delim) { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some(x => String(x).trim() !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  row.push(cur);
+  if (row.some(x => String(x).trim() !== '')) rows.push(row);
+  return rows;
+}
+function bulkDetectColumns(headerRow) {
+  const map = {}; let hits = 0;
+  headerRow.forEach((h, idx) => {
+    const f = bulkFold(h); let key = null;
+    if (/endirim|discount|skidka/.test(f)) key = 'discount';
+    else if (/qiymet|price|mebleg|azn/.test(f)) key = 'price';
+    else if (/kateqor|categor|bolme/.test(f)) key = 'category';
+    else if (/sekil|image|img|foto|photo|picture/.test(f)) key = 'image';
+    else if (/vahid|unit/.test(f)) key = 'unit';
+    else if (f === 'ad' || f === 'adi' || /mehsul|name|product|yemek|title/.test(f)) key = 'name';
+    if (key && !(key in map)) { map[key] = idx; hits++; }
+  });
+  return { map, hits };
+}
+// Cədvəl (2D massiv) -> sətir obyektləri
+function bulkTableToItems(table) {
+  if (!table || !table.length) return [];
+  let { map, hits } = bulkDetectColumns(table[0].map(x => String(x ?? '')));
+  let body = table;
+  if (hits >= 2 && 'name' in map && 'price' in map) body = table.slice(1);
+  else { map = { name: 0, price: 1, category: 2, discount: 3, image: 4 }; }
+  return body.map(r => {
+    const g = k => (k in map ? String(r[map[k]] ?? '').trim() : '');
+    return { name: g('name'), priceRaw: g('price'), categoryRaw: g('category'), discountRaw: g('discount'), imageRaw: g('image'), unitRaw: g('unit') };
+  }).filter(x => x.name || x.priceRaw);
+}
+const BULK_UNITS = { 'ədəd': 'ədəd', 'eded': 'ədəd', 'kq': 'kq', 'kg': 'kq', 'litr': 'litr', 'l': 'litr', 'qram': 'qram', 'q': 'qram', 'gr': 'qram' };
+// Sətri yoxla / normallaşdır
+function bulkNormalizeItem(it, ctx) {
+  const errors = [], warnings = [];
+  const name = it.name.replace(/\s+/g, ' ').trim();
+  if (!name) errors.push('ad boşdur');
+  const price = bulkParseNumber(it.priceRaw);
+  if (isNaN(price) || price <= 0) errors.push('qiymət yanlışdır');
+  let category = ctx.defaultCategory;
+  if (it.categoryRaw) {
+    const hit = ctx.categories.find(c => bulkFold(c) === bulkFold(it.categoryRaw));
+    if (hit) category = hit; else warnings.push('kateqoriya tanınmadı («' + it.categoryRaw + '») → ' + ctx.defaultCategory);
+  }
+  let discount = 0;
+  if (it.discountRaw) {
+    const d = bulkParseNumber(it.discountRaw);
+    if (isNaN(d) || d < 0 || d > 95) warnings.push('endirim ignor edildi'); else discount = d;
+  }
+  const unit = BULK_UNITS[bulkFold(it.unitRaw)] || BULK_UNITS[String(it.unitRaw || '').toLowerCase()] || 'ədəd';
+  const isDiscountActive = discount > 0;
+  const p = isNaN(price) ? 0 : price;
+  return {
+    name, price: p, category, unit, isDiscountActive, discountPercent: discount,
+    discountedPrice: isDiscountActive ? (p - p * discount / 100).toFixed(2) : '',
+    imageRaw: it.imageRaw || '', errors, warnings
+  };
+}
+/*BULK_PURE_END*/
+const B = { rows:[], items:[], images:new Map(), busy:false };
+
+function openBulk(){
+  B.rows = []; B.items = []; B.images = new Map(); B.busy = false;
+  S.lockModal = true; $("modalBox").classList.add("wide");
+  modal(`<h3 class="title-grad">📥 Hazır menyu yüklə</h3>
+    <div class="hint" style="margin:-4px 0 6px">Excel (.xlsx), CSV faylı seçin və ya cədvəli kopyalayıb yapışdırın. Sütunlar: <b>Ad, Qiymət, Kateqoriya, Endirim %, Şəkil</b>. Məhsullar müştəri tətbiqində dərhal görünür.</div>
+    <button class="btn sec" id="bkTpl">⬇ Nümunə şablon (CSV)</button>
+    <label>1. Menyu faylı (.xlsx / .xls / .csv)</label><input id="bkFile" type="file" accept=".xlsx,.xls,.csv,.txt">
+    <label>və ya cədvəli buraya yapışdırın</label><textarea id="bkPaste" rows="4" placeholder="Ad&#9;Qiymət&#9;Kateqoriya&#9;Endirim %&#9;Şəkil"></textarea>
+    <button class="btn sec" id="bkRead">Cədvəli oxu</button>
+    <label>2. Şəkillər (istəyə görə, çoxlu seçim)</label><input id="bkImgs" type="file" accept="image/*" multiple>
+    <div class="hint">Şəkil faylının adı məhsulun adı və ya «Şəkil» sütunu ilə eyni olmalıdır (məs. <b>lahmacun.jpg</b>).</div>
+    <label>Kateqoriya tanınmasa</label><select id="bkCat">${catOptions("Restoranlar")}</select>
+    <label>Eyni adlı məhsul varsa</label><select id="bkDup"><option value="update">Yenilə (qiymət, şəkil)</option><option value="skip">Keç</option></select>
+    <div id="bkSum" class="hint" style="font-weight:700;color:#fff;margin-top:12px"></div>
+    <div style="overflow-x:auto"><table class="bt" id="bkTbl"></table></div>
+    <div id="bkProg" class="hint"></div>
+    <button class="btn" id="bkGo" disabled>Menyunu yüklə</button>
+    <button class="btn sec" id="bkClose">Bağla</button>`);
+  $("bkClose").onclick = () => { if(B.busy && !confirm("Yükləmə davam edir. Yenə də bağlansın?")) return; closeModal(); };
+  $("bkTpl").onclick = () => {
+    const csv = "\uFEFFAd;Qiymət;Kateqoriya;Endirim %;Şəkil\r\nLahmacun;4.50;Restoranlar;;lahmacun.jpg\r\nDöner;6.00;Restoranlar;10;doner.jpg\r\nCola 0.5L;1.80;İçkilər;;\r\n";
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8"}));
+    a.download = "bakugo-menyu-sablon.csv"; document.body.appendChild(a); a.click(); a.remove();
+  };
+  $("bkFile").onchange = async e => {
+    const f = e.target.files[0]; if(!f) return;
+    try{
+      const buf = await f.arrayBuffer(); let table;
+      if(/\.(xlsx|xls)$/i.test(f.name)){
+        if(!window.XLSX){ toast("Excel oxuyucu yüklənmədi. CSV saxlayın və ya cədvəli yapışdırın."); return; }
+        const wb = window.XLSX.read(buf, {type:"array"});
+        table = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:true, defval:""});
+      } else {
+        let t = new TextDecoder("utf-8").decode(buf);
+        if(t.includes("\uFFFD")){ try{ t = new TextDecoder("windows-1254").decode(buf); }catch(_){} }
+        table = bulkParseDelimited(t, bulkDetectDelimiter(t));
+      }
+      bkBuild(bulkTableToItems(table)); if(!B.rows.length) toast("Faylda məhsul tapılmadı");
+    }catch(err){ console.error(err); toast("Fayl oxunmadı"); }
+  };
+  $("bkRead").onclick = () => {
+    const t = $("bkPaste").value; if(!t.trim()){ toast("Əvvəlcə cədvəli yapışdırın"); return; }
+    bkBuild(bulkTableToItems(bulkParseDelimited(t, bulkDetectDelimiter(t))));
+  };
+  $("bkImgs").onchange = e => {
+    B.images = new Map(); Array.from(e.target.files).forEach(f => B.images.set(bulkFold(bulkStripExt(f.name)), f));
+    if(B.rows.length){ B.rows.forEach(r => { r.warnings = r.warnings.filter(w => w !== "şəkil tapılmadı"); }); bkMatch(); }
+    bkRender();
+  };
+  $("bkDup").onchange = bkRender;
+  $("bkCat").onchange = () => { if(B.items.length) bkBuild(B.items); };
+  $("bkGo").onclick = bkImport;
+}
+function bkBuild(items){
+  B.items = items;
+  if(items.length > BULK_MAX_ROWS){ toast("Maksimum " + BULK_MAX_ROWS + " məhsul — ilk " + BULK_MAX_ROWS + " götürüldü"); items = items.slice(0, BULK_MAX_ROWS); }
+  const ctx = { categories: allCats().map(c => c.name), defaultCategory: $("bkCat").value || "Restoranlar" };
+  const seen = new Set();
+  B.rows = items.map(it => { const n = bulkNormalizeItem(it, ctx), k = bulkFold(n.name); if(k && seen.has(k)) n.errors.push("faylda təkrar ad"); if(k) seen.add(k); return n; });
+  bkMatch(); bkRender();
+}
+function bkMatch(){
+  const ex = new Map(); S.products.forEach(p => ex.set(bulkFold(p.name), p));
+  B.rows.forEach(r => {
+    r.imgUrl = ""; r.file = null; r.dup = ex.get(bulkFold(r.name)) || null;
+    if(/^https?:\/\//i.test(r.imageRaw)){ r.imgUrl = r.imageRaw; return; }
+    const keys = []; if(r.imageRaw) keys.push(bulkFold(bulkStripExt(r.imageRaw))); keys.push(bulkFold(r.name));
+    for(const k of keys){ if(k && B.images.has(k)){ r.file = B.images.get(k); break; } }
+    if(!r.file && r.imageRaw && !r.warnings.includes("şəkil tapılmadı")) r.warnings.push("şəkil tapılmadı");
+  });
+}
+function bkRender(){
+  if(!$("bkTbl")) return;
+  const btn = $("bkGo"), sum = $("bkSum");
+  if(!B.rows.length){ $("bkTbl").innerHTML = ""; sum.textContent = ""; btn.disabled = true; btn.textContent = "Menyunu yüklə"; return; }
+  const ok = B.rows.filter(r => !r.errors.length), skip = $("bkDup").value === "skip";
+  const nw = ok.filter(r => !r.dup).length, up = ok.filter(r => r.dup).length, wi = ok.filter(r => r.file || r.imgUrl).length;
+  sum.textContent = `${B.rows.length} sətir · ${ok.length} düzgün · ${B.rows.length - ok.length} xətalı · ${nw} yeni, ${up} mövcud${skip ? " (keçiləcək)" : " (yenilənəcək)"} · ${wi} şəkilli`;
+  $("bkTbl").innerHTML = "<tr><th>#</th><th></th><th>Məhsul</th><th>Qiymət</th><th>Status</th></tr>" + B.rows.map((r, i) => {
+    const src = r.file ? URL.createObjectURL(r.file) : (r.imgUrl || BULK_DEFAULT_IMG);
+    const st = r.errors.length ? `<span class="erc">✖ ${esc(r.errors.join(", "))}</span>` : `<span class="okc">✔ ${r.dup ? "mövcud" : "yeni"}</span>` + (r.warnings.length ? `<br><span class="wac">⚠ ${esc(r.warnings.join("; "))}</span>` : "");
+    return `<tr style="${r.errors.length ? "opacity:.6" : ""}"><td>${i + 1}</td><td><img src="${esc(src)}" alt="" onerror="this.onerror=null;this.src='${BULK_DEFAULT_IMG}'"></td><td>${esc(r.name)}<br><span style="color:var(--mut);font-size:11px">${esc(r.category)}</span></td><td>${r.price ? r.price.toFixed(2) : "—"}${r.discountPercent ? `<br><span style="color:var(--or);font-size:11px">-${r.discountPercent}% → ${esc(r.discountedPrice)}</span>` : ""}</td><td>${st}</td></tr>`;
+  }).join("");
+  const n = skip ? nw : ok.length; btn.disabled = B.busy || n === 0;
+  btn.textContent = n ? `Menyunu yüklə (${n} məhsul)` : "Yüklənəcək məhsul yoxdur";
+}
+async function bkImport(){
+  if(B.busy) return;
+  const skip = $("bkDup").value === "skip", list = B.rows.filter(x => !x.errors.length && !(skip && x.dup));
+  if(!list.length) return;
+  if(!confirm(list.length + " məhsul menyunuza yazılacaq. Davam edək?")) return;
+  B.busy = true; $("bkGo").disabled = true; const prog = $("bkProg");
+  try{
+    const files = Array.from(new Set(list.map(x => x.file).filter(Boolean))), urlBy = new Map(); let done = 0, failed = 0;
+    const q = files.slice();
+    const worker = async () => { while(q.length){ const f = q.shift(); try{ urlBy.set(f, await uploadImage(f)); }catch(e){ console.error(e); failed++; } done++; prog.textContent = `Şəkillər yüklənir: ${done}/${files.length}`; } };
+    if(files.length) await Promise.all([worker(), worker(), worker()]);
+    const base = Date.now(); let created = 0, updated = 0, ops = 0, batch = writeBatch(db), written = 0;
+    for(let i = 0; i < list.length; i++){
+      const x = list[i], img = x.file ? (urlBy.get(x.file) || "") : x.imgUrl;
+      const common = { name:x.name, price:x.price, unit:x.unit, category:x.category, isDiscountActive:x.isDiscountActive, discountPercent:x.discountPercent, discountedPrice:x.discountedPrice };
+      if(x.dup){ const u = {...common}; if(img) u.img = img; batch.update(doc(db, "products", x.dup.id), u); updated++; }
+      else { batch.set(doc(collection(db, "products")), { ...common, ...restFields(), rating:5.0, img: img || BULK_DEFAULT_IMG, createdAt: base + i }); created++; }
+      ops++; written++;
+      if(ops >= 400){ await batch.commit(); batch = writeBatch(db); ops = 0; prog.textContent = `Bazaya yazılır: ${written}/${list.length}`; }
+    }
+    if(ops > 0) await batch.commit();
+    prog.textContent = `✅ Hazırdır: ${created} yeni, ${updated} yenilənmiş.` + (failed ? ` ⚠ ${failed} şəkil yüklənmədi (standart şəkil qoyuldu).` : "");
+    toast(`Menyu yükləndi: ${created} yeni, ${updated} yenilənmiş`);
+    B.rows = []; B.items = [];
+  }catch(err){
+    console.error(err);
+    prog.textContent = "❌ Xəta: " + (err.code || err.message) + ". Yazılanlar saxlanıla bilər; təkrar yükləsəniz «Yenilə» rejimi dublikat yaratmaz.";
+    toast("Yükləmə tamamlanmadı");
+  } finally { B.busy = false; bkRender(); }
+}
+
+/* ===================== ƏMƏLİYYATLAR ===================== */
+const ACT = {
+  async login(){
+    const email = $("lEmail").value.trim(), pass = $("lPass").value;
+    if(!email || !pass){ $("lErr").textContent = "Gmail və şifrəni daxil edin"; return; }
+    try{ loading(true); $("lErr").textContent = ""; await signInWithEmailAndPassword(auth, email, pass); }
+    catch(e){ $("lErr").textContent = authMsg(e); }
+    finally{ loading(false); }
+  },
+  async forgot(){
+    const email = $("lEmail").value.trim();
+    if(!email){ $("lErr").textContent = "Əvvəlcə Gmail ünvanını yazın"; return; }
+    try{ loading(true); await sendPasswordResetEmail(auth, email); $("lErr").style.color = "var(--ok)"; $("lErr").textContent = "Şifrə bərpa linki göndərildi"; }
+    catch(e){ $("lErr").style.color = ""; $("lErr").textContent = authMsg(e); }
+    finally{ loading(false); }
+  },
+  pinOk,
+  logout: doLogout, lock: doLock,
+  nav(d){
+    S.view = d.v;
+    document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "v-" + d.v));
+    document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.v === d.v));
+    document.querySelector("main").scrollTop = 0; render();
+  },
+  pPeriod(d){ S.pPeriod = d.v; renderPanel(); },
+  oPeriod(d){ S.oPeriod = d.v; S.oLimit = 60; renderOrders(); },
+  oTab(d){ S.oTab = d.v; S.oLimit = 60; renderOrders(); },
+  more(){ S.oLimit += 60; renderOrders(); },
+  ordOpen(d, el){ if(S.open.has(d.id)) S.open.delete(d.id); else S.open.add(d.id); el.classList.toggle("open"); },
+  async toggleOpen(){
+    if(!S.R) return;
+    const next = !(S.R.active !== false);
+    if(!next && !confirm("Restoranı bağlayırsınız — yeni sifariş qəbul olunmayacaq. Davam edək?")) return;
+    try{ loading(true); await updateDoc(doc(db, "restaurants", S.uid), { active: next }); toast(next ? "Restoran açıldı" : "Restoran bağlandı"); }
+    catch(e){ toast("Xəta: " + (e.code || e.message)); }
+    finally{ loading(false); }
+  },
+  addProd(){ prodForm(null); },
+  async avail(d){
+    const p = S.products.find(x => x.id === d.id); if(!p) return;
+    const next = p.available === false;
+    try{ loading(true); await updateDoc(doc(db, "products", p.id), { available: next }); toast(next ? "✅ «" + p.name + "» yenidən satışda" : "⛔ «" + p.name + "» stopa qoyuldu — müştəri görməyəcək"); }
+    catch(e){ toast("Xəta: " + (e.code || e.message)); } finally{ loading(false); }
+  },
+  async staffSw(d){
+    const k = d.k, next = !(S.R && S.R[k] !== false);
+    try{ loading(true); await updateDoc(doc(db, "restaurants", S.uid), { [k]: next }); toast(next ? "✅ İcazə verildi" : "🔒 İcazə bağlandı"); }
+    catch(e){ toast("Xəta: " + (e.code || e.message)); } finally{ loading(false); }
+  },
+  setPrep(){
+    const cur = parseInt(S.R && S.R.defaultPrep, 10) || 15;
+    S.lockModal = false;
+    modal(`<h3 class="title-grad">⏱️ Standart hazırlıq vaxtı</h3>` + [10,15,20,30,45].map(m => `<button class="btn${m === cur ? "" : " sec"}" data-act="setPrepV" data-v="${m}">${m} dəqiqə</button>`).join("") + `<button class="btn sec" id="spNo">Bağla</button>`);
+    $("spNo").onclick = closeModal;
+  },
+  async setPrepV(d){
+    try{ loading(true); await updateDoc(doc(db, "restaurants", S.uid), { defaultPrep: parseInt(d.v, 10) }); closeModal(); toast("⏱️ Standart vaxt: " + d.v + " dəq"); }
+    catch(e){ toast("Xəta: " + (e.code || e.message)); } finally{ loading(false); }
+  },
+  staffNote(){
+    S.lockModal = false;
+    modal(`<h3 class="title-grad">📌 İşçilərə qeyd</h3><textarea id="snT" rows="4" maxlength="300" style="font-family:inherit;font-size:14px" placeholder="Məs.: Bu gün lavaş bitib, dönəri çörəkdə verin">${esc((S.R && S.R.staffNote) || "")}</textarea>
+      <button class="btn" id="snOk">Yadda saxla</button><button class="btn red" id="snDel">Qeydi sil</button><button class="btn sec" id="snNo">Bağla</button>`);
+    const save = async v => { try{ loading(true); await updateDoc(doc(db, "restaurants", S.uid), { staffNote: v }); closeModal(); toast(v ? "📌 Qeyd işçi panelində göründü" : "Qeyd silindi"); } catch(e){ toast("Xəta: " + (e.code || e.message)); } finally{ loading(false); } };
+    $("snOk").onclick = () => save($("snT").value.trim()); $("snDel").onclick = () => save(""); $("snNo").onclick = closeModal;
+  },
+  editProd(d){ const p = S.products.find(x => x.id === d.id); if(p) prodForm(p); },
+  bulkOpen(){ openBulk(); },
+  mCat(d){ S.mCat = d.v; renderMenu(); },
+  logoPick(){ $("logoFile").click(); },
+  async wSubmit(){
+    const amount = parseFloat($("wAmount").value), card = $("wCard").value.trim(), B = balanceInfo();
+    if(!amount || amount <= 0){ toast("Məbləği düzgün daxil edin"); return; }
+    if(amount < MIN_WITHDRAW){ toast("Minimum məbləğ " + MIN_WITHDRAW + " AZN-dir"); return; }
+    if(!card){ toast("Kart nömrəsi / IBAN daxil edin"); return; }
+    if(amount > B.balance + 1e-9){ toast("Balans kifayət deyil"); return; }
+    if(!(await reauth("Təsdiq üçün hesab şifrəsi"))) return;
+    try{
+      loading(true);
+      await addDoc(collection(db, "withdrawals"), { type:"restaurant", restaurantId:S.uid, restaurantName:(S.R && S.R.name) || "Restoran", amount, card, status:"pending", createdAt:Date.now() });
+      $("wAmount").value = ""; $("wCard").value = ""; toast("Sorğu göndərildi");
+    }catch(e){ toast("Xəta: " + (e.code || e.message)); }
+    finally{ loading(false); }
+  },
+  async wCancel(d){
+    if(!confirm("Bu pul çıxarma sorğusunu ləğv edək?")) return;
+    try{ loading(true); await updateDoc(doc(db, "withdrawals", d.id), { status:"cancelled" }); toast("Sorğu ləğv edildi"); }
+    catch(e){ toast("Xəta: " + (e.code || e.message)); }
+    finally{ loading(false); }
+  },
+  changePin(){
+    S.lockModal = false;
+    modal(`<h3 class="title-grad">🔐 PIN dəyiş</h3>
+      <label>Cari PIN</label><input id="cp0" type="password" inputmode="numeric" maxlength="8" class="pin-in">
+      <label>Yeni PIN (4–8 rəqəm)</label><input id="cp1" type="password" inputmode="numeric" maxlength="8" class="pin-in">
+      <label>Yeni PIN təkrar</label><input id="cp2" type="password" inputmode="numeric" maxlength="8" class="pin-in">
+      <button class="btn" id="cpOk">Dəyiş</button><button class="btn sec" id="cpNo">Bağla</button>`);
+    $("cpNo").onclick = closeModal;
+    $("cpOk").onclick = async () => {
+      const a = $("cp0").value.trim(), b = $("cp1").value.trim(), c = $("cp2").value.trim();
+      if(S.R.ownerPinHash && pinHash(S.uid, a) !== S.R.ownerPinHash){ toast("Cari PIN yanlışdır"); return; }
+      if(!/^\d{4,8}$/.test(b)){ toast("Yeni PIN 4–8 rəqəm olmalıdır"); return; }
+      if(b !== c){ toast("Yeni PIN-lər eyni deyil"); return; }
+      try{ loading(true); await updateDoc(doc(db, "restaurants", S.uid), { ownerPinHash: pinHash(S.uid, b) }); closeModal(); toast("PIN dəyişdirildi"); }
+      catch(e){ toast("Xəta: " + (e.code || e.message)); }
+      finally{ loading(false); }
+    };
+  }
+};
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-act]"); if(!t) return;
+  const f = ACT[t.dataset.act]; if(f) f(t.dataset, t, e);
+});
+["lPass","lEmail"].forEach(id => $(id).addEventListener("keydown", e => { if(e.key === "Enter") ACT.login(); }));
+["pin1","pin2"].forEach(id => $(id).addEventListener("keydown", e => { if(e.key === "Enter") pinOk(); }));
+$("oSearch").addEventListener("input", () => { S.oLimit = 60; renderOrders(); });
+$("mSearch").addEventListener("input", renderMenu);
+$("logoFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if(!f || !S.uid) return;
+  if(f.size > 15 * 1024 * 1024){ toast("Şəkil 15MB-dan böyük ola bilməz"); return; }
+  try{ loading(true); const url = await uploadImage(f, 600); await updateDoc(doc(db, "restaurants", S.uid), { photoURL: url }); toast("Restoran şəkli yeniləndi"); }
+  catch(err){ console.error(err); toast("Xəta: " + (err.code || err.message)); }
+  finally{ loading(false); }
+});
+
+setInterval(() => { if(S.entered && (S.view === "orders" || S.view === "panel")) render(); }, 30000);
+onAuthStateChanged(auth, user => {
+  if(user){ if(!S.entered) afterLogin(user); }
+  else { S.entered = false; show("authScreen"); }
+});
+</script>
+<script>
+if("serviceWorker" in navigator) window.addEventListener("load", function(){ navigator.serviceWorker.register("sw.js").catch(function(){}); });
+</script>
+<script>
+/* Firebase kitabxanası yüklənməsə istifadəçiyə aydın mesaj ver */
+setTimeout(function(){
+  if(window.__sahibReady) return;
+  var a = document.getElementById('authScreen'); a.classList.remove('hide');
+  document.getElementById('lErr').textContent = 'Firebase kitabxanası yüklənmədi (gstatic.com açılmır?). İnterneti/VPN-i yoxlayıb səhifəni yeniləyin.';
+}, 8000);
+</script>
+</body>
+</html>
