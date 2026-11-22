@@ -1432,7 +1432,7 @@ window.installApp = async function(){
     measurementId: "G-44T95W0PSX"
   };
   /* Ayrı ad: eyni telefonda müştəri/kuryer tətbiqi ilə giriş qarışmasın */
-  const app = initializeApp(firebaseConfig, "bakugo-restoran");
+  const app = initializeApp(firebaseConfig, "goroute-restoran");
   const auth = getAuth(app);
   const db = getFirestore(app);
 
@@ -1901,7 +1901,7 @@ window.installApp = async function(){
   };
 
   /* ===================== BİLDİRİŞLƏR ===================== */
-  const READ_KEY = "bakugoRestReadNotifIds";
+  const READ_KEY = "gorouteRestReadNotifIds";
   let __nT = [], __nB = [], __nFirstT = true, __nFirstB = true;
   const readIds = () => { try { return new Set(JSON.parse(localStorage.getItem(READ_KEY) || "[]")); } catch(e){ return new Set(); } };
   const saveRead = (s) => { try { localStorage.setItem(READ_KEY, JSON.stringify([...s].slice(-300))); } catch(e){} };
@@ -1973,7 +1973,7 @@ window.showSystemNotif = async function(title, body, tag){
   try{
     if(!("Notification" in window) || Notification.permission !== "granted" || !document.hidden) return;
     var reg = ("serviceWorker" in navigator) ? await navigator.serviceWorker.ready : null;
-    var o = { body: body || "", icon: "icon-192.png", badge: "icon-96.png", tag: tag || "bakugo", renotify: true, requireInteraction: tag === "order", vibrate: [350,120,350,120,600], data: { url: "./" } };
+    var o = { body: body || "", icon: "icon-192.png", badge: "icon-96.png", tag: tag || "goroute", renotify: true, requireInteraction: tag === "order", vibrate: [350,120,350,120,600], data: { url: "./" } };
     if(reg && reg.showNotification) await reg.showNotification(title, o); else new Notification(title, o);
   }catch(e){}
 };
