@@ -1,8 +1,8 @@
 {
   "id": "./sahib.html",
-  "name": "BakuGo Sahib",
-  "short_name": "BakuGo Sahib",
-  "description": "BakuGo restoran sahibi paneli: satış, menyu, maliyyə, işçi paneli idarəsi",
+  "name": "Go Route Sahib",
+  "short_name": "Go Route Sahib",
+  "description": "Go Route restoran sahibi paneli: satış, menyu, maliyyə, işçi paneli idarəsi",
   "lang": "az",
   "dir": "ltr",
   "start_url": "./sahib.html",

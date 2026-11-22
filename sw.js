@@ -1,9 +1,9 @@
-/* BakuGo Restoran — Service Worker
+/* Go Route Restoran — Service Worker
    1) Offline dəstəyi (PWABuilder və Play/TWA yoxlaması üçün)
    2) Firebase Cloud Messaging — tətbiq bağlı olanda push bildirişləri
    Bu fayl index.html ilə EYNİ qovluqda olmalıdır. */
 
-const CACHE = 'bakugo-restoran-v10';
+const CACHE = 'goroute-restoran-v11';
 const PRECACHE = [
   './',
   './index.html',

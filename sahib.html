@@ -4,13 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0b0d">
-<title>BakuGo — Restoran Sahibi</title>
+<title>Go Route — Restoran Sahibi</title>
 <link rel="manifest" href="manifest-sahib.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="BakuGo Sahib">
+<meta name="apple-mobile-web-app-title" content="Go Route Sahib">
 <style>
 :root{
   --bg:#0b0b0d; --card:#151518; --card2:#1c1c20; --line:rgba(255,255,255,.08);
@@ -162,7 +162,7 @@ textarea{resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-
 <!-- GİRİŞ -->
 <section id="authScreen" class="gate hide">
   <div class="gate-box">
-    <h1 class="title-grad">👑 BakuGo Sahib</h1>
+    <h1 class="title-grad">👑 Go Route Sahib</h1>
     <p class="sub">Restoran sahibi paneli</p>
     <input id="lEmail" type="email" placeholder="Gmail" autocomplete="username">
     <input id="lPass" type="password" placeholder="Şifrə" autocomplete="current-password">
@@ -906,7 +906,7 @@ function openBulk(){
   $("bkTpl").onclick = () => {
     const csv = "\uFEFFAd;Qiymət;Kateqoriya;Endirim %;Şəkil\r\nLahmacun;4.50;Restoranlar;;lahmacun.jpg\r\nDöner;6.00;Restoranlar;10;doner.jpg\r\nCola 0.5L;1.80;İçkilər;;\r\n";
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv;charset=utf-8"}));
-    a.download = "bakugo-menyu-sablon.csv"; document.body.appendChild(a); a.click(); a.remove();
+    a.download = "goroute-menyu-sablon.csv"; document.body.appendChild(a); a.click(); a.remove();
   };
   $("bkFile").onchange = async e => {
     const f = e.target.files[0]; if(!f) return;

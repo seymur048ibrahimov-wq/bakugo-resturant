@@ -5,7 +5,7 @@
 <!-- Google Maps (bütün xəritələr) -->
 <script>
 /* =====================================================================
-   BakuGo — GOOGLE MAPS ADAPTERİ
+   Go Route — GOOGLE MAPS ADAPTERİ
    Tətbiqdəki bütün xəritələr Google Maps ilə işləyir. Köhnə kod Leaflet
    sintaksisi (L.map, L.marker, ...) ilə yazıldığı üçün burada həmin
    funksiyalar Google Maps JavaScript API üzərində yenidən qurulub.
@@ -742,13 +742,13 @@
 
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>BakuGo Restoran</title>
-<meta name="description" content="BakuGo Restoran — sifarişləri qəbul et, menyunu idarə et.">
+<title>Go Route Restoran</title>
+<meta name="description" content="Go Route Restoran — sifarişləri qəbul et, menyunu idarə et.">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="BakuGo Restoran">
+<meta name="apple-mobile-web-app-title" content="Go Route Restoran">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
@@ -1065,7 +1065,7 @@ input,select,textarea{font-family:inherit;}
 <div id="auth">
   <div class="auth-wrap">
     <img class="auth-logo" src="icon-192.png" alt="">
-    <div class="auth-t">BakuGo Restoran</div>
+    <div class="auth-t">Go Route Restoran</div>
     <div class="auth-s">İşçi paneli · restoranın hesabı ilə daxil olun</div>
     <div id="loginBox">
       <input class="inp" id="loginEmail" type="email" placeholder="E-poçt" autocomplete="username">
@@ -1081,7 +1081,7 @@ input,select,textarea{font-family:inherit;}
 <div class="topbar">
   <div class="brand">
     <img id="topLogo" src="icon-96.png" alt="">
-    <div class="t"><div class="n" id="topName">BakuGo Restoran</div><div class="s" id="topSub">Sifariş paneli</div></div>
+    <div class="t"><div class="n" id="topName">Go Route Restoran</div><div class="s" id="topSub">Sifariş paneli</div></div>
   </div>
   <div class="status-pill" id="statusPill" onclick="toggleActive()"><span class="d"></span><span id="statusTxt">Bağlı</span></div>
   <button class="ibtn" id="bellBtn" onclick="openSheet('notifSheet')">🔔<span class="b" id="bellBadge">0</span></button>
@@ -1175,7 +1175,7 @@ input,select,textarea{font-family:inherit;}
     <div class="list">
       <div class="li danger" onclick="if(confirm('Paneldən çıxmaq istəyirsiniz? Yeni sifarişlər bu cihaza gəlməyəcək.')) logout()"><div class="ic">🚪</div><div class="t">Çıxış</div></div>
     </div>
-    <div style="text-align:center;color:var(--muted);font-size:11.5px;margin:6px 0 10px;">BakuGo Restoran · işçi paneli</div>
+    <div style="text-align:center;color:var(--muted);font-size:11.5px;margin:6px 0 10px;">Go Route Restoran · işçi paneli</div>
   </section>
 </div>
 
@@ -1447,7 +1447,7 @@ window.installApp = async function(){
       let perm = Notification.permission;
       if (perm === "default") { if (!interactive) return; perm = await Notification.requestPermission(); }
       const el = document.getElementById("accPush");
-      if (perm !== "granted") { if(el) el.textContent = "Bağlıdır — açmaq üçün toxunun"; say("🔕 İcazə bağlıdır: Telefon Ayarlar → Tətbiqlər → Chrome/BakuGo Restoran → Bildirişlər"); return; }
+      if (perm !== "granted") { if(el) el.textContent = "Bağlıdır — açmaq üçün toxunun"; say("🔕 İcazə bağlıdır: Telefon Ayarlar → Tətbiqlər → Chrome/Go Route Restoran → Bildirişlər"); return; }
       const reg = (await (window.__swReady || Promise.resolve(null))) || await navigator.serviceWorker.register("./sw.js", { scope: "./" });
       await navigator.serviceWorker.ready;
       const token = await msgMod.getToken(msgMod.getMessaging(app), { serviceWorkerRegistration: reg });
@@ -1503,7 +1503,7 @@ window.installApp = async function(){
   function paintAccount(){
     const d = currentUserData || {};
     const on = d.active !== false;
-    document.getElementById("topName").textContent = d.name || "BakuGo Restoran";
+    document.getElementById("topName").textContent = d.name || "Go Route Restoran";
     document.getElementById("profName").textContent = d.name || "Restoran";
     document.getElementById("profEmail").textContent = "İşçi paneli";
     document.getElementById("profAddr").textContent = "📍 " + (d.restaurantAddress || "—");
@@ -1684,12 +1684,12 @@ window.installApp = async function(){
     (o.items || []).forEach(i => { const k = i.name + "|" + (parseFloat(i.price) || 0); if(!g[k]) g[k] = { n: i.name, p: parseFloat(i.price) || 0, q: 0 }; g[k].q += parseFloat(i.qty || i.quantity || 1) || 1; });
     const rows = Object.values(g).map(x => `<div class="r"><span>${x.q} × ${esc(x.n)}</span><span>${(x.p * x.q).toFixed(2)}</span></div>`).join("");
     const d = new Date(tms(o) || Date.now());
-    document.getElementById("printArea").innerHTML = `<h1>${esc((currentUserData && currentUserData.name) || "BakuGo")}</h1>
+    document.getElementById("printArea").innerHTML = `<h1>${esc((currentUserData && currentUserData.name) || "Go Route")}</h1>
       <div class="c">SİFARİŞ #${esc(id.substring(0, 6).toUpperCase())}</div>
       <div class="c">${d.toLocaleDateString("az-AZ")} ${d.toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" })}</div>
       ${o.prepMinutes ? `<div class="c">Hazırlıq: ${o.prepMinutes} dəq</div>` : ""}<hr>${rows}<hr>
       <div class="r"><b>CƏMİ</b><b>${orderTotal(o).toFixed(2)} AZN</b></div>
-      ${noteOf(o) ? `<hr><div><b>QEYD:</b> ${esc(noteOf(o))}</div>` : ""}<hr><div class="c">BakuGo</div>`;
+      ${noteOf(o) ? `<hr><div><b>QEYD:</b> ${esc(noteOf(o))}</div>` : ""}<hr><div class="c">Go Route</div>`;
     document.getElementById("printArea").style.setProperty("--paper", (CFG.paper === 58 ? 48 : 72) + "mm");
     setTimeout(() => window.print(), 50);
   };
@@ -1927,7 +1927,7 @@ window.installApp = async function(){
       Snd.notif(false);
       const bell = document.getElementById("bellBtn"); bell.classList.remove("ring"); void bell.offsetWidth; bell.classList.add("ring");
       toast("🔔 " + (n.title || "Yeni bildiriş"));
-      if(window.showSystemNotif) window.showSystemNotif(n.title || "BakuGo", n.body || "", "n-" + ch.doc.id);
+      if(window.showSystemNotif) window.showSystemNotif(n.title || "Go Route", n.body || "", "n-" + ch.doc.id);
     });
   }
   function listenNotifications(user){

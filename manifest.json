@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "BakuGo Restoran",
-  "short_name": "BakuGo Restoran",
-  "description": "BakuGo restoran işçi paneli: sifarişləri qəbul et, hazırla, kuryerə təhvil ver.",
+  "name": "Go Route Restoran",
+  "short_name": "Go Route Restoran",
+  "description": "Go Route restoran işçi paneli: sifarişləri qəbul et, hazırla, kuryerə təhvil ver.",
   "lang": "az",
   "dir": "ltr",
   "start_url": "./?source=pwa",
